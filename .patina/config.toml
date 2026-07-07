@@ -1,0 +1,43 @@
+[project]
+name = "."
+created = "2026-07-07T12:29:33.057579+00:00"
+branch = "work"
+
+[interfaces]
+allowed = []
+default = ""
+
+[embeddings]
+model = "e5-base-v2"
+
+[search]
+scry_threshold = 0.0
+semantic_threshold = 0.3499999940395355
+belief_threshold = 0.5
+
+[retrieval]
+rrf_k = 60
+fetch_multiplier = 2
+
+[environment]
+os = "macos"
+arch = "aarch64"
+detected_tools = [
+    "claude",
+    "cargo-fmt",
+    "brew",
+    "cargo",
+    "vim",
+    "gh",
+    "wasm-pack",
+    "cargo-expand",
+    "nvim",
+    "cargo-clippy",
+    "docker",
+    "jq",
+    "go",
+    "git",
+]
+
+[beliefs]
+stale_days = 90
