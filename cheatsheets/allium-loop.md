@@ -46,8 +46,12 @@
 touches a spec: `allium check` + `allium analyse`. After any code change
 against a spec: `/weed` + tests. Green gates or it didn't happen.
 
-## Team pipeline (patina resume-style)
+## Team pipeline
 
 1. Edit `.allium` → 2. `check` + `analyse` clean → 3. `allium plan` →
-`plan.json` committed → 4. tests tagged `// obligation id: ...` →
-5. CI re-generates plans and fails on drift.
+`plan.json` generated/committed if the repo adopts plans → 4. tests tagged
+with obligation IDs → 5. CI runs deterministic gates and, optionally,
+regenerates plans to fail on drift.
+
+Local practice targets: `examples/access-grant-lifecycle.allium` for the
+spec-to-tests path and `examples/code/pinned-installer.sh` for distill.

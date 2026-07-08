@@ -1,28 +1,28 @@
 -- allium: 3
--- toy-grant-lifecycle.allium (training solution)
+-- access-grant-lifecycle.allium (training solution)
 
--- Scope: Lifecycle of a single toy grant, from request to terminal state,
---        and the authority decision it backs.
+-- Scope: Lifecycle of a single access grant, from request to terminal state,
+--        and the authorization decision it backs.
 -- Includes:
 --   - approve/deny/expire/revoke transitions
---   - toy-call authorization against the grant state
+--   - resource-use authorization against the grant state
 -- Excludes:
---   - which toys exist and their WIT contracts
---   - Vision/Node scoping of grants (see mct-product-map.allium)
---   - storage and observation ledger mechanics
+--   - which resources exist and how they are implemented
+--   - organization/team scoping of grants
+--   - storage and audit-log mechanics
 
 entity Operator {
     name: String
 }
 
-entity Child {
-    child_id: String
+entity Requester {
+    requester_id: String
 }
 
-entity ToyGrant {
+entity AccessGrant {
     grant_state: requested | active | denied | expired | revoked
-    toy_name: String
-    requested_by_child_id: String
+    resource_name: String
+    requested_by: String
     decided_by_operator: String?
     expires_at: Timestamp?
 
@@ -34,8 +34,8 @@ config {
 }
 
 given {
-    grant: ToyGrant
-    child: Child
+    grant: AccessGrant
+    requester: Requester
 }
 
 rule GrantApproved {
@@ -44,7 +44,7 @@ rule GrantApproved {
     ensures: grant.grant_state = active
     ensures: grant.decided_by_operator = operator.name
     ensures: grant.expires_at = now + config.grant_ttl
-    ensures: ToyGrantActivated(grant: grant, operator: operator)
+    ensures: AccessGrantActivated(grant: grant, operator: operator)
 }
 
 rule GrantDenied {
@@ -52,14 +52,14 @@ rule GrantDenied {
     requires: grant.grant_state = requested
     ensures: grant.grant_state = denied
     ensures: grant.decided_by_operator = operator.name
-    ensures: ToyGrantDenied(grant: grant, operator: operator)
+    ensures: AccessGrantDenied(grant: grant, operator: operator)
 }
 
 rule GrantExpires {
-    when: _: ToyGrant.expires_at <= now
+    when: _: AccessGrant.expires_at <= now
     requires: grant.grant_state = active
     ensures: grant.grant_state = expired
-    ensures: ToyGrantExpired(grant: grant)
+    ensures: AccessGrantExpired(grant: grant)
 }
 
 rule GrantRevoked {
@@ -67,30 +67,30 @@ rule GrantRevoked {
     requires: grant.grant_state = active
     ensures: grant.grant_state = revoked
     ensures: grant.decided_by_operator = operator.name
-    ensures: ToyGrantRevoked(grant: grant, operator: operator)
+    ensures: AccessGrantRevoked(grant: grant, operator: operator)
 }
 
-rule ToyCallAuthorized {
-    when: ChildInvokesToy(child)
+rule ResourceUseAuthorized {
+    when: RequesterUsesResource(requester)
     requires: grant.is_active
-    ensures: ToyCallAllowed(grant: grant, child: child)
+    ensures: ResourceUseAllowed(grant: grant, requester: requester)
 }
 
-rule ToyCallDenied {
-    when: ChildInvokesToy(child)
+rule ResourceUseDenied {
+    when: RequesterUsesResource(requester)
     requires: not grant.is_active
-    ensures: ToyCallRefused(grant: grant, child: child, reason: "no-active-grant")
+    ensures: ResourceUseRefused(grant: grant, requester: requester, reason: "no-active-grant")
 }
 
-surface ToyGrantControl {
+surface AccessGrantControl {
     facing operator: Operator
-    context grant: ToyGrant
+    context grant: AccessGrant
 
     exposes:
         operator.name
         grant.grant_state
-        grant.toy_name
-        grant.requested_by_child_id
+        grant.resource_name
+        grant.requested_by
         grant.decided_by_operator
         grant.expires_at
 
@@ -103,27 +103,27 @@ surface ToyGrantControl {
             when grant.grant_state = active
 }
 
-surface ToyInvocation {
-    facing child: Child
-    context grant: ToyGrant
+surface ResourceUse {
+    facing requester: Requester
+    context grant: AccessGrant
 
     exposes:
-        child.child_id
+        requester.requester_id
         grant.is_active
 
     provides:
-        ChildInvokesToy(child)
+        RequesterUsesResource(requester)
 }
 
-contract ToyGrantAuthority {
+contract AccessGrantAuthority {
     @invariant DenyByDefault
-        -- A toy call is allowed only when an active grant exists; every other state refuses.
+        -- A resource-use attempt is allowed only when an active grant exists; every other state refuses.
 
     @invariant ExpiredGrantsDoNotAuthorize
-        -- Once expires_at passes, the grant leaves active and can no longer allow calls.
+        -- Once expires_at passes, the grant leaves active and can no longer allow resource use.
 
     @invariant TerminalStatesStayTerminal
-        -- denied, expired, and revoked grants never return to requested or active; re-access requires a new grant.
+        -- denied, expired, and revoked grants never return to requested or active; a new request is required.
 
     @invariant DecisionsAreAttributed
         -- Every approve, deny, and revoke records the deciding operator.

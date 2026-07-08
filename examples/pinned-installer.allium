@@ -1,0 +1,150 @@
+-- allium: 3
+-- pinned-installer.allium
+
+-- Scope: Behavior of a pinned CLI installer used as a distill example.
+-- Includes:
+--   - supported-platform gate
+--   - archive download, checksum verification, and installation result
+--   - PATH registration notice when the install directory is not on PATH
+-- Excludes:
+--   - exact download URL shape, curl flags, temp directory names, and shell syntax
+--   - package-manager installation flows
+--   - operating-system permission errors outside the installer's control
+
+entity Maintainer {
+    name: String
+}
+
+entity Platform {
+    os: linux | macos | windows | other
+    arch: x86_64 | aarch64 | arm64 | other
+
+    is_supported: os in {linux, macos} and arch in {x86_64, aarch64, arm64}
+}
+
+entity InstallerRun {
+    run_state: requested | downloading | verifying | installed | refused | failed
+    requested_version: String
+    expected_sha256: String
+    downloaded_sha256: String?
+    install_path: String?
+    failure_reason: String?
+    install_dir_on_path: Boolean
+    path_notice_shown: Boolean
+
+    checksum_matches: downloaded_sha256 = expected_sha256
+}
+
+given {
+    run: InstallerRun
+    platform: Platform
+}
+
+rule SupportedInstallStarts {
+    when: MaintainerRequestsInstall(maintainer)
+    requires: run.run_state = requested
+    requires: platform.is_supported
+    ensures: run.run_state = downloading
+    ensures: DownloadStarted(version: run.requested_version, platform: platform, maintainer: maintainer)
+}
+
+rule UnsupportedPlatformRefused {
+    when: MaintainerRequestsInstall(maintainer)
+    requires: run.run_state = requested
+    requires: not platform.is_supported
+    ensures: run.run_state = refused
+    ensures: run.failure_reason = "unsupported-platform"
+    ensures: InstallRefused(run: run, maintainer: maintainer, reason: "unsupported-platform")
+}
+
+rule ArchiveDownloadCompletes {
+    when: ArchiveDownloaded(observed_sha256)
+    requires: run.run_state = downloading
+    ensures: run.run_state = verifying
+    ensures: run.downloaded_sha256 = observed_sha256
+    ensures: ArchiveReadyForVerification(run: run)
+}
+
+rule ArchiveDownloadFails {
+    when: ArchiveDownloadFailed(reason)
+    requires: run.run_state = downloading
+    ensures: run.run_state = failed
+    ensures: run.failure_reason = reason
+    ensures: InstallFailed(run: run, reason: reason)
+}
+
+rule ChecksumAccepted {
+    when: ChecksumCompared(maintainer)
+    requires: run.run_state = verifying
+    requires: run.checksum_matches
+    ensures: run.run_state = installed
+    ensures: run.install_path = "install-dir/allium"
+    ensures: CliInstalled(run: run, maintainer: maintainer, version: run.requested_version)
+}
+
+rule ChecksumRejected {
+    when: ChecksumCompared(maintainer)
+    requires: run.run_state = verifying
+    requires: not run.checksum_matches
+    ensures: run.run_state = refused
+    ensures: run.failure_reason = "checksum-mismatch"
+    ensures: InstallRefused(run: run, maintainer: maintainer, reason: "checksum-mismatch")
+}
+
+rule PathNoticeEmitted {
+    when: InstallPathChecked(maintainer)
+    requires: run.run_state = installed
+    requires: not run.install_dir_on_path
+    ensures: run.path_notice_shown = true
+    ensures: PathRegistrationNoticeShown(run: run, maintainer: maintainer)
+}
+
+rule PathNoticeSkipped {
+    when: InstallPathChecked(maintainer)
+    requires: run.run_state = installed
+    requires: run.install_dir_on_path
+    ensures: run.path_notice_shown = false
+    ensures: PathRegistrationNoticeSkipped(run: run, maintainer: maintainer)
+}
+
+surface InstallerCLI {
+    facing maintainer: Maintainer
+    context run: InstallerRun
+
+    exposes:
+        maintainer.name
+        platform.os
+        platform.arch
+        run.run_state
+        run.requested_version
+        run.expected_sha256
+        run.install_path
+        run.failure_reason
+        run.path_notice_shown
+
+    provides:
+        MaintainerRequestsInstall(maintainer)
+            when run.run_state = requested
+        ArchiveDownloaded(observed_sha256)
+            when run.run_state = downloading
+        ArchiveDownloadFailed(reason)
+            when run.run_state = downloading
+        ChecksumCompared(maintainer)
+            when run.run_state = verifying
+        InstallPathChecked(maintainer)
+            when run.run_state = installed
+}
+
+contract PinnedInstallerSafety {
+    @invariant UnsupportedPlatformsRefuseBeforeDownload
+        -- A run on an unsupported operating system or architecture refuses before any download starts.
+
+    @invariant ChecksumMismatchNeverInstalls
+        -- A downloaded archive whose hash differs from expected_sha256 is refused and never reaches installed.
+
+    @invariant InstalledRunRecordsPath
+        -- A successful run records where the executable was installed.
+
+    @invariant PathNoticeReflectsEnvironment
+        -- The installer emits the PATH notice exactly when the install directory is not already on PATH.
+}

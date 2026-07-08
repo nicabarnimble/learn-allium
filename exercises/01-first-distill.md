@@ -1,7 +1,7 @@
 # Exercise 01 — First Distill (Session 1 homework)
 
-Distill one small existing function or module **you own** into an Allium
-spec.
+Distill one small existing function, script, or module **you own** into an
+Allium spec.
 
 ## Constraints
 
@@ -13,15 +13,15 @@ spec.
 
 ## Suggested targets
 
-- A single `patina` CLI subcommand (e.g. one slate command).
-- `patina-mct/scripts/install-allium-ci.sh` — small, but has real behavior:
-  version pinning, checksum refusal, platform gating.
+- `examples/code/pinned-installer.sh` — small, but has real behavior:
+  platform gating, checksum refusal, installation, and PATH notice.
+- One local CLI subcommand or script from a project you own.
 - One small state-carrying struct you've touched recently.
 
 ## Procedure
 
-1. Run `/distill` on the target in an agent session (or write by hand —
-   both are legitimate).
+1. Run `/distill` on the target in an agent session (or write by hand — both
+   are legitimate).
 2. Read the output critically: delete anything that is an implementation
    accident (flag names, temp paths, log formatting).
 3. Check what the distill *missed*: is there an error path the code handles
@@ -41,5 +41,5 @@ spec.
 
 - Could someone reimplement the module *from the spec alone* and preserve
   the behavior that matters?
-- Could the implementation change storage/CLI framework without touching
-  the spec? If not, you leaked implementation.
+- Could the implementation change storage/CLI framework without touching the
+  spec? If not, you leaked implementation.

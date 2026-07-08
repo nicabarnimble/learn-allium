@@ -1,24 +1,24 @@
 # Allium Training Curriculum
 
-A complete training program to take the team from Allium beginners to
-proficient users *and* contributors who understand how Allium works under the
-hood — anchored in this codebase, not toy examples.
+A complete, self-contained training program that takes a team from Allium
+beginners to proficient users and contributors. The curriculum is anchored in
+this repository's own examples first; remote production specs are optional
+comparative reading.
 
 ## Training Goals
 
-- **Basics** — comfortable installing Allium, using the core skills, and
-  writing/reading Allium specs.
-- **Deep dive** — understand the language design, why it works, the internals
-  (parser, CLI, skills), and how to extend or customize it.
-- **Proficiency** — confidently integrate Allium into the Patina/MCT
-  workflow, debug issues, and contribute improvements (skills, patterns,
-  tools).
+- **Basics** — install Allium, use the core skills, and write/read small
+  Allium specs.
+- **Deep dive** — understand the language design, parser/CLI pipeline,
+  analysis limits, and extension points.
+- **Proficiency** — integrate Allium into normal development workflows with
+  checked specs, generated obligations, tagged tests, and reviewable drift.
 
 ## Format
 
-4–6 sessions (1–2 hours each) + hands-on labs + a capstone project.
-Mix of lectures, live demos, pair programming, and individual exercises.
-Every session ends with coding time.
+4–6 sessions (1–2 hours each) + hands-on labs + a capstone project. Mix of
+lectures, live demos, pair programming, and individual exercises. Every
+session ends with working time.
 
 | # | Session | Length | Focus |
 |---|---------|--------|-------|
@@ -35,60 +35,68 @@ Supporting material:
   assessment rubric.
 - [Cheat sheets](cheatsheets/) — syntax, CLI, and the Allium loop on one page
   each.
-- [Exercises](exercises/) — starter specs and worked solutions, all validated
-  with `allium check` / `allium analyse`.
-- [Slides](slides/session-03-slides.md) — Session 3 expanded into a full
-  36-slide deck with speaker notes: one running example grown from a
-  one-sentence behavior to production patterns and toolchain internals.
+- [Exercises](exercises/) — starter specs and worked solutions validated with
+  `allium check` / `allium analyse`.
+- [Internal examples](examples/) — the examples the sessions depend on.
+- [Slides](slides/session-03-slides.md) — Session 3 expanded into a slide deck
+  with a running library example.
 
-## Why this curriculum is Patina/MCT-flavored
+## Internal example set
 
-Allium is already load-bearing here. The course uses the real artifacts:
+These are the canonical examples for this repo:
 
-- **patina** — `layer/allium/` is the canonical home for behavioral specs.
-  The Mother specs (`layer/allium/mother/*.allium`) and their generated
-  `*.plan.json` obligations are the reference material for Sessions 2, 3,
-  and 5. CI installs `allium-cli` and fails on plan drift.
-- **patina-mct** — `layer/allium/mct-product-map.allium` is a full product
-  map written in Allium (decisions, open questions, contracts, surfaces).
-  CI pins the Allium release (`scripts/install-allium-ci.sh`) and runs
-  `allium check layer/allium` in tier-0.
-- **Doctrine** — `patina-mct/layer/core/spec-driven-design.md`:
-  *"Allium says what MCT is. Slate says what work is ready. Beliefs/evidence
-  say why. Code executes inside that boundary."*
-- **Beliefs** — `allium-as-business-backlog` and
-  `allium-as-agent-display-lisp` in `layer/surface/epistemic/beliefs/`
-  capture how the team already thinks about Allium.
+| Example | Purpose |
+|---------|---------|
+| [`examples/library-lending.allium`](examples/library-lending.allium) | Small state machine, surfaces, temporal observation. |
+| [`examples/access-grant-lifecycle.allium`](examples/access-grant-lifecycle.allium) | Authority decisions, grant expiry/revocation, deny-by-default. |
+| [`examples/pinned-installer.allium`](examples/pinned-installer.allium) + [`examples/code/pinned-installer.sh`](examples/code/pinned-installer.sh) | Distill-from-code demo with platform and checksum behavior. |
+| [`examples/support-ticket-routing.allium`](examples/support-ticket-routing.allium) | Product-map style example with safe customer projection vs operations inspection. |
+| [`examples/ci/github-actions-allium.yml`](examples/ci/github-actions-allium.yml) | Copyable CI gate for examples and exercise solutions. |
+
+Validate the bundle:
+
+```bash
+allium check examples
+for spec in examples/*.allium; do allium analyse "$spec"; done
+```
+
+## Optional remote examples
+
+Patina and patina-mct remain useful production-scale examples, but the
+curriculum no longer depends on them. Use them as remote case studies after
+learners are comfortable with the internal examples:
+
+- `patina/layer/allium/mother/*.allium` — lifecycle specs and obligation-plan
+  drift checks.
+- `patina-mct/layer/allium/mct-product-map.allium` — a large product-map spec
+  with decision-log entries, open questions, contracts, and safe projections.
 
 ## Prerequisites
 
 Before Session 1, each attendee should have:
 
-1. A working Rust toolchain (`rustup`, matching `rust-toolchain.toml`).
-2. A clone of `patina` and `patina-mct`.
-3. Claude Code (or another agent harness) with the Allium skills available —
-   see Session 1 install steps.
+1. A working Rust toolchain (`rustup` + `cargo`).
+2. This repository cloned.
+3. Claude Code or another agent harness with the Allium skills available.
 
 ## Installing the toolchain
 
 Two halves: the **skills** (agent-side) and the **CLI** (analysis-side).
 
 ```bash
-# Skills (pick one)
-npx skills add juxt/allium            # generic skills install
-# or the Claude Code plugin flow — see Session 1
+# Skills (pick the flow that matches your harness)
+npx skills add juxt/allium
 
 # CLI (pick one)
 brew tap juxt/allium && brew install allium   # macOS
-cargo install --locked allium-cli             # what patina CI does
-# CI-pinned binary (linux x86_64): patina-mct/scripts/install-allium-ci.sh
+cargo install --locked allium-cli
 ```
 
 Verify:
 
 ```bash
 allium --version           # course material validated against 3.5.0
-allium check /home/user/patina/layer/allium/mother/mother-lifecycle.allium
+allium check examples
 ```
 
 ## Assessment

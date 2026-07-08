@@ -7,8 +7,7 @@ Course material validated against `allium 3.5.0`.
 
 ```bash
 brew tap juxt/allium && brew install allium   # macOS
-cargo install --locked allium-cli             # what patina CI does
-patina-mct/scripts/install-allium-ci.sh       # pinned + SHA-verified (linux CI)
+cargo install --locked allium-cli
 allium --version
 ```
 
@@ -26,45 +25,53 @@ allium help <command>        # per-command help
 ## Daily one-liners
 
 ```bash
-# validate everything in the canonical layer
-allium check layer/allium
+# validate the internal example bundle
+allium check examples
 
 # full analysis of one spec, findings only
-allium analyse layer/allium/mother/mother-lifecycle.allium | jq '.findings'
+allium analyse examples/access-grant-lifecycle.allium | jq '.findings'
 
 # regenerate a plan (never hand-edit plan.json)
-allium plan spec.allium > spec.allium.plan.json
+allium plan examples/access-grant-lifecycle.allium \
+  > examples/access-grant-lifecycle.allium.plan.json
 
-# refresh all Mother plans (patina)
-layer/allium/mother/regenerate-artifacts.sh
-
-# list obligation ids for test tagging
-allium plan spec.allium | jq -r '.obligations[].id'
+# list obligation IDs for test tagging
+allium plan examples/access-grant-lifecycle.allium | jq -r '.obligations[].id'
 
 # inspect one rule's AST
-allium parse spec.allium | jq '.. | objects | select(.name? == "StopRunningDaemon")'
+allium parse examples/access-grant-lifecycle.allium \
+  | jq '.. | objects | select(.name? == "GrantExpires")'
 ```
 
-## Obligation tagging (resume-style, per layer/allium/mother/README.md)
+## Obligation tagging
 
 ```rust
-// obligation id: rule-success.StartupSucceeded
-// obligation ids: rule-success.StartupSucceeded + rule-entity-creation.StartupSucceeded.1
+// obligation id: rule-success.GrantApproved
+// obligation ids: rule-success.GrantApproved + rule-success.ResourceUseAuthorized
 #[test]
-fn startup_success_marks_control_plane_ready() { /* ... */ }
+fn approved_grant_allows_resource_use() { /* ... */ }
 ```
 
-## CI gates in this org
+## CI gates
+
+Minimum gate:
 
 ```bash
-# patina (.github/workflows/test.yml)
-cargo install --locked allium-cli
-layer/allium/mother/regenerate-artifacts.sh
-git diff --exit-code -- layer/allium/mother/*.plan.json   # plan drift fails CI
-
-# patina-mct (scripts/ci-tier0.sh)
-allium check layer/allium                                  # tier-0 gate
+allium check examples
+find exercises -path '*/solution/*.allium' -print0 | xargs -0 -n1 allium check
 ```
+
+Optional plan-drift gate (for repos that commit generated plans):
+
+```bash
+for spec in examples/*.allium; do
+  allium plan "$spec" > "$spec.plan.json"
+done
+git diff --exit-code -- '*.plan.json'
+```
+
+See [`examples/ci/github-actions-allium.yml`](../examples/ci/github-actions-allium.yml)
+for a copyable workflow sketch.
 
 ## Reading output
 
@@ -87,10 +94,10 @@ Diagnostics you'll actually meet:
 | `allium.status.noExit` | enum status has no rule transitioning out of it |
 
 `analyse` findings you'll actually meet: `"type": "conflict"` — two rules
-with **different triggers** can both fire in the same state and set the
-same field to different values (a race, found mechanically). The idiomatic
-fix is in `mother-lifecycle.allium`'s `StopTimesOut`: let the temporal rule
-**observe a fact instead of racing the state field**.
+with **different triggers** can both fire in the same state and set the same
+field to different values (a race, found mechanically). The idiomatic fix is
+shown in `examples/library-lending.allium`: let the temporal rule **observe a
+fact instead of racing the state field**.
 
 ## Know the net's exact shape (validated on 3.5.0)
 
@@ -99,9 +106,8 @@ missing status exits, cross-trigger conflicts on one state.
 
 Silent: a **typo'd field name** in `requires`/`ensures`; **same-trigger**
 rules with identical guards and contradictory `ensures` (treated as case
-analysis). Also note the transition tracker only credits a status exit
-when the guard names the state **directly** (`status = x`) — `in {a, b}`
-sets and derived-field guards don't register, so guard state-changing
-rules with direct equality. Green CLI ≠ correct spec — that's what `/weed`
-and review are for. (And each silence is a good first upstream
-contribution.)
+analysis). Also note the transition tracker only credits a status exit when
+the guard names the state **directly** (`status = x`) — `in {a, b}` sets and
+derived-field guards don't register, so guard state-changing rules with
+direct equality. Green CLI ≠ correct spec — that's what `/weed` and review
+are for. Each silence is a good first upstream contribution.

@@ -1,5 +1,5 @@
 -- allium: 3
--- library.allium — running example for the Session 3 slide deck (final form, slide 24)
+-- library-lending.allium — running example for the Session 3 slide deck (final form, slide 24)
 
 entity Member {
     name: String

@@ -1,7 +1,8 @@
 # Allium v3 Syntax Cheat Sheet
 
-One page. Examples adapted from `layer/allium/mother/*.allium` and
-`patina-mct/layer/allium/mct-product-map.allium`.
+One page. Examples are adapted from this repo's internal specs:
+`examples/library-lending.allium`, `examples/access-grant-lifecycle.allium`,
+and `examples/support-ticket-routing.allium`.
 
 ## File scaffolding
 
@@ -16,107 +17,111 @@ One page. Examples adapted from `layer/allium/mother/*.allium` and
 --   - what deliberately lives elsewhere
 
 config {
-    grace_period: Duration = 5.seconds
+    grant_ttl: Duration = 24.hours
 }
 
 given {
-    daemon: MotherDaemon           ← ambient instances rules refer to
+    grant: AccessGrant             ← ambient instances rules refer to
 }
 ```
 
 ## Entities & values
 
 ```allium
-value TraceContext {               ← immutable data shape, no identity
-    trace_id: String
-    span_id: String
+value AuditReference {             ← immutable data shape, no identity
+    ref_id: String
+    issued_at: Timestamp
 }
 
-entity MotherDaemon {              ← identity + state, rules act on it
-    lifecycle: stopped | starting | running | stopping | failed
-    control_plane_ready: Boolean
-    last_failure_message: String?              ← optional field
-    stop_deadline_at: Timestamp?
-    tags: List<String>
+entity AccessGrant {               ← identity + state, rules act on it
+    grant_state: requested | active | denied | expired | revoked
+    resource_name: String
+    requested_by: String
+    decided_by_operator: String?   ← optional field
+    expires_at: Timestamp?
 
-    is_supervised: backend = launchd or backend = systemd   ← derived field
+    is_active: grant_state = active
 }
 ```
 
 Conditional field (exists only in some states):
 
 ```allium
-route_taken: RouteTaken? when outcome = success | failed | timed_out
+resolution_note: String when ticket_state = closed
 ```
 
-Types: `String` `Boolean` `Integer` `Timestamp` `Duration` `List<T>`
-inline enums (`a | b | c`), other value/entity types, `?` optional.
+Types: `String` `Boolean` `Integer` `Timestamp` `Duration` `List<T>` inline
+enums (`a | b | c`), other value/entity types, `?` optional.
 
 ## Rules
 
 ```allium
-rule StopRunningDaemon {
-    when: OperatorStopsMother(operator)           ← trigger event
-    requires: daemon.lifecycle = running          ← guards (all must hold)
-    ensures: daemon.lifecycle = stopping          ← state effect
-    ensures: daemon.stop_deadline_at = now + config.grace_period
-    ensures: MotherSigtermSent(operator: operator)   ← emitted event
+rule GrantRevoked {
+    when: OperatorRevokesGrant(operator)          ← trigger event
+    requires: grant.grant_state = active          ← guards (all must hold)
+    ensures: grant.grant_state = revoked          ← state effect
+    ensures: grant.decided_by_operator = operator.name
+    ensures: AccessGrantRevoked(grant: grant, operator: operator)  ← emitted event
 }
 ```
 
 - Case analysis = several rules sharing one `when`, with `requires` clauses
   partitioning the cases.
 - Temporal trigger (timeout/expiry):
-  `when: _: MotherDaemon.stop_deadline_at <= now`
-- Negation: `requires: not daemon.manual_start_blocked`
-- Set membership: `requires: daemon.lifecycle in {stopped, failed}`
+  `when: _: AccessGrant.expires_at <= now`
+- Negation: `requires: not grant.is_active`
+- Set membership: `requires: ticket.severity in {high, critical}`
 - Every trigger a rule listens for must be **provided** by a surface or
   emitted by another rule's `ensures`, or check reports
   `allium.rule.unreachableTrigger`.
-- Guard **state-changing** rules with direct equality (`status = x`):
-  the transition tracker doesn't credit `in {}` or derived-field guards,
-  and an uncredited state exit triggers `allium.status.noExit`.
+- Guard **state-changing** rules with direct equality (`status = x`): the
+  transition tracker doesn't credit `in {}` or derived-field guards, and an
+  uncredited state exit can trigger `allium.status.noExit`.
 - Temporal rules that could race a state field should **observe a fact
-  instead** (emit an event, don't set the field) — see `StopTimesOut`.
+  instead** (emit an event, don't set the field) — see
+  `examples/library-lending.allium`'s `BookGoesOverdue`.
 
 ## Surfaces (who may see what, and where events come from)
 
 ```allium
-surface MotherLifecycleCLI {
+surface AccessGrantControl {
     facing operator: Operator            ← an entity, or a declared actor
-    context daemon: MotherDaemon
+    context grant: AccessGrant
 
     exposes:                             ← ONLY these fields are visible
         operator.name
-        daemon.lifecycle
+        grant.grant_state
+        grant.resource_name
 
     provides:                            ← how events enter the system
-        OperatorStartsMotherManually(operator)
-            when daemon.lifecycle = stopped      ← optional guard
-        OperatorStopsMother(operator)
+        OperatorApprovesGrant(operator)
+            when grant.grant_state = requested
+        OperatorRevokesGrant(operator)
+            when grant.grant_state = active
 }
 ```
 
-Sensitive reasoning gets its own operator-facing surface (see
-`RouteDecisionInspection` vs `MctResultReturn` in the MCT product map).
-Named actors are declared separately when identity matters:
+Sensitive reasoning gets its own operations-facing surface (see
+`CustomerTicketStatus` vs `OperationsTriageInspection` in
+`examples/support-ticket-routing.allium`). Named actors are declared
+separately when identity matters:
 
 ```allium
 actor ResultConsumer {
-    within: MctResult
-    identified_by: result.call_id
+    within: Result
+    identified_by: result.audit_ref
 }
 ```
 
 ## Contracts & invariants
 
 ```allium
-contract MctResultTerminality {
-    @invariant ResultIsTerminal
-        -- An MctResult records the final outcome and is immutable once constructed.
+contract AccessGrantAuthority {
+    @invariant DenyByDefault
+        -- A resource-use attempt is allowed only when an active grant exists.
 
-    @invariant DeniedResultHasNoRouteTaken
-        -- If the call is denied before execution, no route was taken.
+    @invariant ExpiredGrantsDoNotAuthorize
+        -- Once expires_at passes, the grant leaves active and can no longer allow use.
 }
 ```
 
@@ -125,9 +130,9 @@ contract MctResultTerminality {
 ## Decisions & open questions
 
 ```allium
-open question "What routing inputs are mandatory vs advisory?"
--- Decision: Vision is the primary data-sharing boundary.
--- Principle: Fastest path wins only among authorized paths.
+open question "Should premium tickets bypass the standard queue?"
+-- Decision: Customer-facing messages are safe summaries.
+-- Principle: Ranking can prioritize only among already-authorized options.
 ```
 
 Undecided things stay visible; decisions are logged next to them.
@@ -143,4 +148,4 @@ Undecided things stay visible; decisions are logged next to them.
 - Button labels in surfaces → UI leak
 - Behavioral requirement in a comment with no rule → prose smuggling
 - Enum state no rule enters or leaves → imagined state
-- Same `when`+`requires`, contradictory `ensures` → conflict (analyse finds it)
+- Same `when`+`requires`, contradictory `ensures` → conflict by accretion
