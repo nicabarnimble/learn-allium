@@ -40,6 +40,9 @@ build/
 .patina/local/
 ENVIRONMENT.toml
 
+# Tutorial run sandboxes (derived, not committed)
+.tutorial/runs/
+
 # Temporary files
 *.tmp
 *.bak

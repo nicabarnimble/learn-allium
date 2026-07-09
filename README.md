@@ -40,6 +40,8 @@ Supporting material:
 - [Internal examples](examples/) — the examples the sessions depend on.
 - [Slides](slides/session-03-slides.md) — Session 3 expanded into a slide deck
   with a running library example.
+- [Allium Tutor](tutorial/) — an isolated Pi-powered guided lesson runner
+  for slow, hands-on practice.
 
 ## Internal example set
 
@@ -97,6 +99,25 @@ Verify:
 ```bash
 allium --version           # course material validated against 3.5.0
 allium check examples
+```
+
+Start the canonical Rustlings-style Alliumlings practice:
+
+```bash
+./learn-allium
+```
+
+This opens exercises on the left and a Pi helper pane on the right. For setup checks only:
+
+```bash
+./learn-allium doctor
+```
+
+Legacy/fallback modes:
+
+```bash
+./learn-allium lesson-01   # guided single-lesson tutor
+./learn-allium pi          # embedded-in-Pi tutor
 ```
 
 ## Assessment
