@@ -2,7 +2,11 @@
 set -euo pipefail
 
 WORKSPACE="${ALLIUM_TUTOR_WORKSPACE:-$(pwd)}"
+WORKSPACE="$(cd "$WORKSPACE" && pwd -P)"
 RUN_DIR="${ALLIUM_TUTOR_RUN_DIR:-$WORKSPACE}"
+if [[ -d "$RUN_DIR" ]]; then
+  RUN_DIR="$(cd "$RUN_DIR" && pwd -P)"
+fi
 PI_PANE="${ALLIUM_TUTOR_PI_PANE:-}"
 EDITOR_CMD="${VISUAL:-${EDITOR:-nano}}"
 EX_DIR="$WORKSPACE/exercises"
@@ -10,9 +14,12 @@ META_DIR="$WORKSPACE/.alliumlings"
 STATE_FILE="$META_DIR/state"
 DONE_FILE="$META_DIR/done"
 
-NAMES=("01_first_rule" "02_reachable_trigger")
-TITLES=("First rule" "Reachable trigger")
-FILES=("01_first_rule.allium" "02_reachable_trigger.allium")
+MANIFEST_FILE="$META_DIR/exercises.toml"
+NAMES=()
+TITLES=()
+FILES=()
+HINTS=()
+SOLUTIONS=()
 
 cd "$WORKSPACE"
 
@@ -27,22 +34,74 @@ paint() { printf '%b%s%b' "$1" "$2" "$RESET"; }
 line() { printf '%b%s%b\n' "$MUTED" "$(printf '%*s' "${COLUMNS:-80}" '' | tr ' ' '─')" "$RESET"; }
 short_path() { local p="$1" max="${2:-76}"; (( ${#p} <= max )) && printf '%s' "$p" || printf '…%s' "${p: -$((max - 1))}"; }
 
-mkdir -p "$META_DIR"
-[[ -f "$STATE_FILE" ]] || echo 0 > "$STATE_FILE"
-[[ -f "$DONE_FILE" ]] || : > "$DONE_FILE"
+load_manifest() {
+  NAMES=(); TITLES=(); FILES=(); HINTS=(); SOLUTIONS=()
+  [[ -f "$MANIFEST_FILE" ]] || { echo "error: missing Alliumlings manifest: $MANIFEST_FILE" >&2; exit 1; }
+
+  local name title file hint solution
+  while IFS=$'\t' read -r name title file hint solution; do
+    [[ -n "$name" ]] || continue
+    if [[ -z "$title" || -z "$file" ]]; then
+      echo "error: invalid exercise in manifest: name=$name title=$title file=$file" >&2
+      exit 1
+    fi
+    NAMES+=("$name")
+    TITLES+=("$title")
+    FILES+=("$file")
+    HINTS+=("${hint:-hints/$name.md}")
+    SOLUTIONS+=("${solution:-solutions/$file}")
+  done < <(awk '
+    function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+    function val(line) {
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      sub(/[[:space:]]*#.*/, "", line)
+      line = trim(line)
+      if (line ~ /^".*"$/) { sub(/^"/, "", line); sub(/"$/, "", line) }
+      return line
+    }
+    function emit() {
+      if (name != "" || title != "" || file != "") {
+        print name "\t" title "\t" file "\t" hint "\t" solution
+      }
+    }
+    /^[[:space:]]*\[\[exercises\]\][[:space:]]*$/ { emit(); name=""; title=""; file=""; hint=""; solution=""; next }
+    $1 == "name" { name = val($0); next }
+    $1 == "title" { title = val($0); next }
+    $1 == "file" { file = val($0); next }
+    $1 == "hint" { hint = val($0); next }
+    $1 == "solution" { solution = val($0); next }
+    END { emit() }
+  ' "$MANIFEST_FILE")
+
+  [[ "${#NAMES[@]}" -gt 0 ]] || { echo "error: manifest has no exercises: $MANIFEST_FILE" >&2; exit 1; }
+}
 
 current_index() { cat "$STATE_FILE" 2>/dev/null || echo 0; }
 set_current_index() { echo "$1" > "$STATE_FILE"; }
+count() { printf '%s' "${#NAMES[@]}"; }
+sanitize_current_index() {
+  local i
+  i="$(current_index)"
+  if ! [[ "$i" =~ ^[0-9]+$ ]] || [[ "$i" -ge "$(count)" ]]; then
+    set_current_index 0
+  fi
+}
 current_name() { local i; i="$(current_index)"; printf '%s' "${NAMES[$i]}"; }
 current_title() { local i; i="$(current_index)"; printf '%s' "${TITLES[$i]}"; }
 current_file() { local i; i="$(current_index)"; printf '%s/%s' "$EX_DIR" "${FILES[$i]}"; }
-count() { printf '%s' "${#NAMES[@]}"; }
+current_hint() { local i; i="$(current_index)"; printf '%s/%s' "$META_DIR" "${HINTS[$i]}"; }
 is_done() { grep -qx "$1" "$DONE_FILE" 2>/dev/null; }
 mark_done() { is_done "$1" || echo "$1" >> "$DONE_FILE"; }
 mark_not_done() { grep -vx "$1" "$DONE_FILE" > "$DONE_FILE.tmp" 2>/dev/null || true; mv "$DONE_FILE.tmp" "$DONE_FILE"; }
 
+mkdir -p "$META_DIR"
+[[ -f "$STATE_FILE" ]] || echo 0 > "$STATE_FILE"
+[[ -f "$DONE_FILE" ]] || : > "$DONE_FILE"
+load_manifest
+sanitize_current_index
+
 header() {
-  clear
+  clear 2>/dev/null || true
   local i total name title status
   i="$(current_index)"; total="$(count)"; name="$(current_name)"; title="$(current_title)"
   if is_done "$name"; then status="$(paint "$GREEN" "done")"; else status="$(paint "$YELLOW" "pending")"; fi
@@ -84,7 +143,7 @@ run_current() {
     printf '%b✅ Passed.%b check/analyse are clean.\n' "$GREEN$BOLD" "$RESET"
     echo
     if [[ "$(current_index)" -lt $(($(count)-1)) ]]; then
-      echo "Press n for the next exercise."
+      echo "Press 4 for the next exercise."
     else
       printf '%bYou finished the current Alliumlings set.%b\n' "$GREEN$BOLD" "$RESET"
     fi
@@ -101,9 +160,39 @@ run_current() {
   fi
 }
 
+file_mtime() {
+  local file="$1"
+  stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null
+}
+
+watch_current() {
+  local file last_mtime="" mtime key
+  while true; do
+    file="$(current_file)"
+    mtime="$(file_mtime "$file" || echo missing)"
+    if [[ "$mtime" != "$last_mtime" ]]; then
+      last_mtime="$mtime"
+      run_current
+      echo
+      printf '%bWatching for saves.%b Edit in another terminal, press Enter to re-run, or press q to return.\n' "$CYAN$BOLD" "$RESET"
+    fi
+
+    key=""
+    if IFS= read -r -s -t 1 -n 1 key; then
+      case "$key" in
+        q|Q) return 0 ;;
+        *) last_mtime="" ;;
+      esac
+    elif [[ ! -t 0 ]]; then
+      sleep 1
+    fi
+  done
+}
+
 show_hint() {
   header
-  local hint="$META_DIR/hints/$(current_name).md"
+  local hint
+  hint="$(current_hint)"
   printf '%bHint%b\n' "$BOLD$YELLOW" "$RESET"; line; echo
   [[ -f "$hint" ]] && cat "$hint" || echo "No hint found: $hint"
 }
@@ -111,7 +200,7 @@ show_hint() {
 edit_current() {
   header
   echo "Opening $(current_file) in $EDITOR_CMD"
-  echo "Save and quit, then run r."
+  echo "Save and quit, then press Enter to check."
   pause
   $EDITOR_CMD "$(current_file)"
 }
@@ -133,7 +222,8 @@ reset_current() {
   header
   local name src dst
   name="$(current_name)"; src="$META_DIR/starters/$name.allium"; dst="$(current_file)"
-  read -r -p "Reset $name? [y/N] " answer
+  local answer=""
+  read -r -p "Reset $name? [y/N] " answer || answer=""
   case "$answer" in
     y|Y|yes|YES) cp "$src" "$dst"; mark_not_done "$name"; echo "Reset." ;;
     *) echo "Cancelled." ;;
@@ -165,7 +255,8 @@ ask_pi() {
 
 quit_all() {
   header
-  read -r -p "Quit Alliumlings and close tmux session? [y/N] " answer
+  local answer=""
+  read -r -p "Quit Alliumlings? [y/N] " answer || answer=""
   case "$answer" in
     y|Y|yes|YES)
       if [[ -n "${TMUX:-}" ]] && command -v tmux >/dev/null 2>&1; then
@@ -187,24 +278,31 @@ menu() {
     printf '  %b4%b      Move to the next exercise\n' "$CYAN$BOLD" "$RESET"
     printf '  %b5%b      Show progress\n' "$CYAN$BOLD" "$RESET"
     printf '  %b6%b      Reset this exercise\n' "$CYAN$BOLD" "$RESET"
-    printf '  %bq%b      Quit and close tmux\n\n' "$CYAN$BOLD" "$RESET"
-    read -r -n 1 -p "$(paint "$BOLD$YELLOW" "Choice: ")" choice; echo
-    case "$choice" in
-      ""|$'\n'|$'\r'|r|R) run_current; pause ;;
-      1|e|E) edit_current ;;
-      2|h|H) show_hint; pause ;;
-      3|a|A) ask_pi; pause ;;
-      4|n|N) next_exercise ;;
-      5|l|L) list_exercises; pause ;;
-      6|x|X) reset_current; pause ;;
-      q|Q) quit_all ;;
-      *) header; echo "Unknown choice. Press Enter to check, or choose 1–6."; pause ;;
+    printf '  %b7%b      Watch for saves / auto-rerun\n' "$CYAN$BOLD" "$RESET"
+    printf '  %bq%b      Quit\n\n' "$CYAN$BOLD" "$RESET"
+    local choice=""
+    if ! read -r -p "$(paint "$BOLD$YELLOW" "Choice: ")" choice; then
+      echo
+      return 0
+    fi
+    case "${choice:-}" in
+      ""|r|R|run|check) run_current; pause ;;
+      1|e|E|edit) edit_current ;;
+      2|h|H|hint) show_hint; pause ;;
+      3|a|A|ask) ask_pi; pause ;;
+      4|n|N|next) next_exercise ;;
+      5|l|L|list|progress) list_exercises; pause ;;
+      6|x|X|reset) reset_current; pause ;;
+      7|w|W|watch|auto|auto-watch) watch_current ;;
+      q|Q|quit|exit) quit_all ;;
+      *) header; echo "Unknown choice. Press Enter to check, or choose 1–7."; pause ;;
     esac
   done
 }
 
 case "${1:-watch}" in
   watch|menu) menu ;;
+  auto-watch|watch-file|watch-save) watch_current ;;
   run) run_current ;;
   hint) show_hint ;;
   edit) edit_current ;;
@@ -212,5 +310,5 @@ case "${1:-watch}" in
   reset) reset_current ;;
   list) list_exercises ;;
   ask) ask_pi ;;
-  *) echo "Usage: alliumlings.sh [watch|run|hint|edit|next|reset|list|ask]" >&2; exit 1 ;;
+  *) echo "Usage: alliumlings.sh [watch|auto-watch|run|hint|edit|next|reset|list|ask]" >&2; exit 1 ;;
 esac

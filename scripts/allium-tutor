@@ -3,27 +3,31 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Allium Tutor — guided, isolated Pi lessons
+Alliumlings — resilient Allium training
 
 Start here:
   ./learn-allium
 
 Equivalent direct commands:
-  scripts/allium-tutor watch [--strict]        # canonical Alliumlings training
+  scripts/allium-tutor watch [--strict]        # canonical single-terminal training
+  scripts/allium-tutor watch --auto-watch      # rerun checks when current exercise is saved
   scripts/allium-tutor start [--strict]        # alias for watch
+  scripts/allium-tutor tmux [--strict]         # optional two-pane Pi helper mode
   scripts/allium-tutor lesson-01 [--strict]    # legacy guided Lesson 01 tutor
   scripts/allium-tutor pi [--strict]           # fallback: tutor embedded inside Pi
   scripts/allium-tutor doctor
 
 Commands:
-  watch        Launch Alliumlings: tiny failing specs + run/hint/next loop.
+  watch        Launch Alliumlings in the current terminal.
   start        Alias for watch.
+  tmux         Optional two-pane mode: Alliumlings left, Pi helper right.
   lesson-01    Legacy guided Lesson 01 tutor; with --smoke, verify its fixture.
   pi           Legacy embedded-in-Pi tutor mode.
-  doctor       Check that pi, allium, terminal, tmux, and the Allium skill are ready.
+  doctor       Check required Allium tooling and optional Pi/tmux support.
 
 Options:
   --smoke      Prepare a run and verify lesson fixtures without launching Pi.
+  --auto-watch Rerun checks when the current exercise file changes.
   --strict     Use a per-run PI_CODING_AGENT_DIR. This isolates Pi auth/settings too.
                You may need to provide API keys or login again.
 
@@ -41,8 +45,10 @@ welcome() {
   echo "  2. create a disposable lesson workspace under .tutorial/runs/,"
   if [[ "$mode" == "pi" ]]; then
     echo "  3. open Pi with the tutor embedded as a fallback mode."
-  else
+  elif [[ "$mode" == "tmux" ]]; then
     echo "  3. open Alliumlings in tmux: exercises on the left, Pi help on the right."
+  else
+    echo "  3. open Alliumlings in this terminal."
   fi
   echo
   echo 'Tip: if something fails, run `./learn-allium doctor` for the setup check only.'
@@ -98,25 +104,44 @@ MSG
 }
 
 preflight() {
+  local profile="${1:-core}"
   echo "== Allium Tutor preflight =="
-  require_cmd pi
   require_cmd allium
 
-  echo "pi:     $(pi --version 2>/dev/null || echo installed)"
   echo "allium: $(allium --version)"
 
-  local skill
-  skill="$(find_allium_skill)"
-  echo "skill:  $skill"
+  if command -v pi >/dev/null 2>&1; then
+    echo "pi:     $(pi --version 2>/dev/null || echo installed)"
+  elif [[ "$profile" == "pi" || "$profile" == "tmux" ]]; then
+    echo "error: required command not found: pi" >&2
+    return 1
+  else
+    echo "pi:     not found (optional; Ask Pi will show a copyable prompt)"
+  fi
+
+  local skill=""
+  if skill="$(find_allium_skill 2>/dev/null)"; then
+    echo "skill:  $skill"
+  elif [[ "$profile" == "pi" || "$profile" == "tmux" ]]; then
+    find_allium_skill >/dev/null
+    return 1
+  else
+    echo "skill:  not found (optional unless launching Pi)"
+  fi
+
   if command -v tmux >/dev/null 2>&1; then
     echo "tmux:   $(tmux -V 2>/dev/null || echo installed)"
+  elif [[ "$profile" == "tmux" ]]; then
+    echo "error: required command not found: tmux" >&2
+    return 1
   else
-    echo "tmux:   not found (default two-pane mode needs tmux; fallback: ./learn-allium pi)"
+    echo "tmux:   not found (optional; default mode does not need it)"
   fi
+
   if [[ -t 1 ]]; then
     echo "terminal: ${TERM:-unknown} (interactive stdout detected)"
   else
-    echo "terminal: non-interactive stdout (Pi TUI works best in a real terminal)"
+    echo "terminal: non-interactive stdout"
   fi
 
   echo "checking local examples..."
@@ -230,7 +255,7 @@ launch_lesson_01() {
     welcome pi
   fi
 
-  preflight
+  preflight pi
 
   local lesson_id run_dir workspace root
   lesson_id="01-first-rule"
@@ -288,6 +313,7 @@ launch_lesson_01() {
 }
 
 prepare_alliumlings_run() {
+  local require_skill="${1:-false}"
   local root timestamp run_dir workspace skill skill_dir
   root="$(repo_root)"
 
@@ -295,8 +321,14 @@ prepare_alliumlings_run() {
   [[ -d "$root/tutorial/alliumlings/solutions" ]] || { echo "error: missing tutorial/alliumlings/solutions" >&2; return 1; }
   [[ -d "$root/tutorial/alliumlings/hints" ]] || { echo "error: missing tutorial/alliumlings/hints" >&2; return 1; }
 
-  skill="$(find_allium_skill)"
-  skill_dir="$(cd "$(dirname "$skill")" && pwd)"
+  skill=""
+  skill_dir=""
+  if [[ "$require_skill" == true ]]; then
+    skill="$(find_allium_skill)"
+    skill_dir="$(cd "$(dirname "$skill")" && pwd)"
+  elif skill="$(find_allium_skill 2>/dev/null)"; then
+    skill_dir="$(cd "$(dirname "$skill")" && pwd)"
+  fi
 
   timestamp="$(date +%Y%m%d-%H%M%S)-$$"
   run_dir="$root/.tutorial/runs/alliumlings-$timestamp"
@@ -317,7 +349,9 @@ prepare_alliumlings_run() {
   cp "$root"/tutorial/alliumlings/solutions/*.allium "$workspace/.alliumlings/solutions"/
   cp "$root"/tutorial/alliumlings/hints/*.md "$workspace/.alliumlings/hints"/
   cp "$root/tutorial/alliumlings/exercises.toml" "$workspace/.alliumlings/exercises.toml"
-  cp -R "$skill_dir"/. "$run_dir/skills/allium"/
+  if [[ -n "$skill_dir" ]]; then
+    cp -R "$skill_dir"/. "$run_dir/skills/allium"/
+  fi
   echo 0 > "$workspace/.alliumlings/state"
   : > "$workspace/.alliumlings/done"
 
@@ -363,12 +397,17 @@ launch_alliumlings() {
   local smoke=false
   local strict=false
   local show_welcome=false
+  local panes=false
+  local runner_mode="watch"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --smoke) smoke=true ;;
       --strict) strict=true ;;
       --welcome) show_welcome=true ;;
+      --auto-watch|--watch-file|--watch-save) runner_mode="auto-watch" ;;
+      --tmux|--panes) panes=true ;;
+      --no-tmux|--single) panes=false ;;
       -h|--help) usage; return 0 ;;
       *) echo "error: unknown option for alliumlings: $1" >&2; usage >&2; return 1 ;;
     esac
@@ -378,15 +417,24 @@ launch_alliumlings() {
   if [[ "$show_welcome" == true ]]; then
     echo "== Welcome to Alliumlings =="
     echo
-    echo "This opens tiny failing Allium exercises on the left and Pi help on the right."
+    if [[ "$panes" == true ]]; then
+      echo "This opens tiny failing Allium exercises on the left and Pi help on the right."
+    else
+      echo "This opens tiny failing Allium exercises in this terminal."
+      echo "Pi help is optional: choose 'Ask Pi' to get a copyable prompt."
+    fi
     echo
   fi
 
-  preflight
+  if [[ "$panes" == true ]]; then
+    preflight tmux
+  else
+    preflight core
+  fi
 
   local root run_dir workspace
   root="$(repo_root)"
-  run_dir="$(prepare_alliumlings_run)"
+  run_dir="$(prepare_alliumlings_run "$panes")"
   workspace="$run_dir/workspace"
 
   if [[ "$smoke" == true ]]; then
@@ -394,9 +442,25 @@ launch_alliumlings() {
     return 0
   fi
 
-  if ! command -v tmux >/dev/null 2>&1; then
-    echo "error: tmux is required for Alliumlings watch mode" >&2
-    return 1
+  if [[ "$panes" != true ]]; then
+    if [[ "$strict" == true ]]; then
+      echo "note: --strict only affects Pi helper modes; default Alliumlings does not launch Pi."
+      echo
+    fi
+    echo "== Launching Alliumlings =="
+    echo "run:       $run_dir"
+    echo "workspace: $workspace"
+    echo
+    (
+      cd "$workspace"
+      export ALLIUM_TUTOR_REPO_ROOT="$root"
+      export ALLIUM_TUTOR_RUN_DIR="$run_dir"
+      export ALLIUM_TUTOR_WORKSPACE="$workspace"
+      export ALLIUM_TUTOR_HOME="$run_dir/home"
+      export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+      exec "$root/tutorial/bin/alliumlings.sh" "$runner_mode"
+    )
+    return 0
   fi
 
   local session session_name pi_script tutor_script
@@ -448,7 +512,7 @@ export ALLIUM_TUTOR_WORKSPACE="$workspace"
 export ALLIUM_TUTOR_HOME="$run_dir/home"
 export ALLIUM_TUTOR_TMP="$run_dir/tmp"
 export ALLIUM_TUTOR_PI_PANE="\${ALLIUM_TUTOR_PI_PANE:?}"
-exec "$root/tutorial/bin/alliumlings.sh" watch
+exec "$root/tutorial/bin/alliumlings.sh" "$runner_mode"
 EOF
 
   chmod +x "$pi_script" "$tutor_script"
@@ -495,7 +559,7 @@ launch_tmux_lesson_01() {
     welcome tmux
   fi
 
-  preflight
+  preflight tmux
 
   local lesson_id run_dir workspace root
   lesson_id="01-first-rule"
@@ -616,9 +680,13 @@ main() {
   fi
 
   case "$1" in
-    watch|alliumlings|lings|start|go|run|tmux)
+    watch|alliumlings|lings|start|go|run)
       shift
       launch_alliumlings --welcome "$@"
+      ;;
+    tmux|panes)
+      shift
+      launch_alliumlings --welcome --tmux "$@"
       ;;
     pi|embedded|embedded-pi)
       shift
@@ -627,7 +695,7 @@ main() {
     doctor|check|preflight|--preflight)
       shift
       [[ $# -eq 0 ]] || { echo "error: doctor/preflight takes no arguments" >&2; return 1; }
-      preflight
+      preflight core
       ;;
     lesson-01|01|01-first-rule|first-rule)
       shift

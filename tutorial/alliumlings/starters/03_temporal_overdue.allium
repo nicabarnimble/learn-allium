@@ -1,0 +1,74 @@
+-- allium: 3
+-- 03_temporal_overdue.allium — starter
+
+-- Scope: a borrowed book becomes overdue when its due date passes, then can be returned.
+-- Includes:
+--   - borrowing an on-shelf book
+--   - observing the due date as a temporal trigger
+--   - returning an overdue book
+-- Excludes:
+--   - fines, renewals, reminders, and reservations
+
+entity Member {
+    name: String
+}
+
+entity Book {
+    status: on_shelf | borrowed | overdue
+    title: String
+    borrowed_by: String?
+    due_at: Timestamp?
+}
+
+config {
+    loan_period: Duration = 21.days
+}
+
+given {
+    book: Book
+    member: Member
+}
+
+rule BorrowBook {
+    when: MemberBorrowsBook(member)
+    requires: book.status = on_shelf
+    ensures: book.status = borrowed
+    ensures: book.borrowed_by = member.name
+    ensures: book.due_at = now + config.loan_period
+    ensures: BookBorrowed(book: book, member: member)
+}
+
+-- TODO: Add rule MarkBookOverdue here.
+-- It should listen for the temporal trigger _: Book.due_at <= now,
+-- require the book to still be borrowed, move the book to overdue,
+-- and emit BookOverdue(book: book, borrower: book.borrowed_by).
+
+rule ReturnOverdueBook {
+    when: MemberReturnsBook(member)
+    requires: book.status = overdue
+    ensures: book.status = on_shelf
+    ensures: book.borrowed_by = none
+    ensures: book.due_at = none
+    ensures: BookReturned(book: book, member: member)
+}
+
+surface LibraryDesk {
+    facing member: Member
+    context book: Book
+
+    exposes:
+        member.name
+        book.status
+        book.title
+        book.due_at
+
+    provides:
+        MemberBorrowsBook(member)
+        MemberReturnsBook(member)
+            when book.status = overdue
+}
+
+contract OverduePromise {
+    @invariant BorrowedBooksBecomeOverdue
+        -- Once due_at passes, a borrowed book becomes overdue.
+}

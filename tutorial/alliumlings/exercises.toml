@@ -15,3 +15,10 @@ title = "Reachable trigger"
 file = "02_reachable_trigger.allium"
 hint = "hints/02_reachable_trigger.md"
 solution = "solutions/02_reachable_trigger.allium"
+
+[[exercises]]
+name = "03_temporal_overdue"
+title = "Temporal overdue"
+file = "03_temporal_overdue.allium"
+hint = "hints/03_temporal_overdue.md"
+solution = "solutions/03_temporal_overdue.allium"

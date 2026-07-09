@@ -107,7 +107,13 @@ Start the canonical Rustlings-style Alliumlings practice:
 ./learn-allium
 ```
 
-This opens exercises on the left and a Pi helper pane on the right. For setup checks only:
+This opens exercises in the current terminal. Pi help is optional: choose “Ask Pi” to get a copyable prompt. Use menu option `7` or `./learn-allium --auto-watch` for save-triggered rechecks, or run the optional two-pane mode:
+
+```bash
+./learn-allium tmux
+```
+
+For setup checks only:
 
 ```bash
 ./learn-allium doctor
@@ -118,6 +124,7 @@ Legacy/fallback modes:
 ```bash
 ./learn-allium lesson-01   # guided single-lesson tutor
 ./learn-allium pi          # embedded-in-Pi tutor
+./learn-allium tmux        # two-pane Alliumlings + Pi helper
 ```
 
 ## Assessment

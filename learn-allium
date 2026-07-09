@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUTOR="$ROOT/scripts/allium-tutor"
 
 # Friendly default:
-#   ./learn-allium          -> start Alliumlings (Rustlings-style training)
-#   ./learn-allium --strict -> same, with isolated Pi auth/settings
+#   ./learn-allium          -> start Alliumlings in this terminal
+#   ./learn-allium tmux     -> optional two-pane Pi helper mode
 # Advanced pass-through:
 #   ./learn-allium doctor
 #   ./learn-allium lesson-01 --smoke

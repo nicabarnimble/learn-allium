@@ -11,13 +11,10 @@ cd learn-allium
 
 ## 2. Install prerequisites
 
-Learners need Pi, Allium CLI, the Allium skill, and tmux for the clean two-pane lesson UI.
+Learners only need the Allium CLI for the default resilient app.
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 brew tap juxt/allium && brew install allium
-brew install tmux
-npx skills add juxt/allium
 ```
 
 If not on macOS/Homebrew, install the CLI with Cargo:
@@ -26,13 +23,26 @@ If not on macOS/Homebrew, install the CLI with Cargo:
 cargo install --locked allium-cli
 ```
 
+Optional coach mode uses Pi and the Allium skill:
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+npx skills add juxt/allium
+```
+
+Optional two-pane mode also needs tmux:
+
+```bash
+brew install tmux
+```
+
 ## 3. Setup check
 
 ```bash
 ./learn-allium doctor
 ```
 
-Expected: Pi version, Allium `3.5.0` or compatible, Allium skill path, tmux version, terminal note, and local examples check cleanly.
+Expected: Allium `3.5.0` or compatible, optional Pi/tmux notes, terminal note, and local examples check cleanly.
 
 ## 4. Launch Alliumlings
 
@@ -40,12 +50,9 @@ Expected: Pi version, Allium `3.5.0` or compatible, Allium skill path, tmux vers
 ./learn-allium
 ```
 
-This runs the setup check, creates an isolated run, and opens tmux:
+This runs the setup check, creates an isolated run, and opens Alliumlings in the current terminal. Learners can optionally choose `7` to auto-rerun checks when they save the current exercise from another terminal.
 
-- left pane: Alliumlings exercises;
-- right pane: Pi as the agent helper.
-
-Learners stay in the left pane:
+Learners use:
 
 ```text
 Enter  check my work
@@ -55,15 +62,14 @@ Enter  check my work
 4      next exercise
 5      progress
 6      reset
+7      watch for saves / auto-rerun
 q      quit
 ```
 
-Useful controls:
+If a learner chooses `3`, the app prints a prompt they can copy into Pi. For the older paired-pane experience:
 
-```text
-q                        quit from the tutor menu and close tmux
-Ctrl-b then Left/Right    switch panes
-Ctrl-b then d             detach without closing
+```bash
+./learn-allium tmux
 ```
 
 ## 5. If someone gets stuck
@@ -72,7 +78,7 @@ Use the simple progression:
 
 ```text
 2      show hint
-3      ask Pi
+3      ask Pi prompt
 6      reset current exercise
 ```
 
@@ -84,28 +90,30 @@ Or start a fresh isolated run:
 
 ## 6. Collect artifacts
 
-Ask learners to export from the Pi pane if you want the agent conversation:
-
-```text
-/export alliumlings.html
-```
-
-Or collect the edited specs:
+Collect the edited specs:
 
 ```text
 .tutorial/runs/alliumlings-<timestamp>/workspace/exercises/*.allium
+```
+
+If learners used Pi separately, they can export that conversation from Pi:
+
+```text
+/export alliumlings.html
 ```
 
 ## 7. Instructor smoke test before class
 
 ```bash
 ./learn-allium --smoke
+./learn-allium tmux --smoke        # optional Pi/tmux mode
 ./learn-allium lesson-01 --smoke   # legacy guided lesson, optional
 ```
 
 Legacy/fallback modes:
 
 ```bash
+./learn-allium tmux        # two-pane Alliumlings + Pi helper
 ./learn-allium lesson-01   # guided single-lesson tutor
 ./learn-allium pi          # embedded-in-Pi tutor
 ```

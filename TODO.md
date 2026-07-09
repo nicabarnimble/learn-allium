@@ -8,14 +8,15 @@ Goal: turn this repo into a class-ready Alliumlings training path: tiny failing 
 - Keep lessons local and self-contained; use `examples/` and `exercises/` as the source of truth.
 - Never edit course examples during a lesson run; copy fixtures into a disposable workspace.
 - Every probabilistic agent step gets a deterministic gate: `allium check`, `allium analyse`, and eventually `allium plan`.
-- Pi is the guided agent; the tutorial should make the Allium skill easy to invoke and inspect.
+- Pi is an optional coach; deterministic Allium exercises should work without tmux or agent setup.
 
 ## Milestone 1 — Minimal guided Pi tutor
 
 Definition of done: legacy guided Lesson 01 remains available, but the canonical default is Alliumlings.
 
 - [x] Add friendly `./learn-allium` entrypoint and `scripts/allium-tutor` launcher.
-  - [x] Default to a two-pane tmux experience: standalone tutor on the left, Pi helper on the right.
+  - [x] Default to a resilient single-terminal Alliumlings experience.
+  - [x] Keep `./learn-allium tmux` as optional two-pane Pi helper mode.
   - [x] Keep `./learn-allium pi` as fallback embedded-in-Pi mode.
   - [x] Creates `.tutorial/runs/<lesson-id>-<timestamp>/`.
   - [x] Creates `workspace/`, `skills/`, `sessions/`, `home/`, and `tmp/` under the run directory.
@@ -59,12 +60,14 @@ Definition of done: `./learn-allium watch` launches a Rustlings-style loop with 
   - [x] `4` advance after pass.
   - [x] `5` list progress.
   - [x] `6` reset current exercise.
-  - [x] `q` quit and close tmux.
-- [x] Make `./learn-allium` default to Alliumlings.
+  - [x] `q` quit.
+- [x] Make `./learn-allium` default to single-terminal Alliumlings.
 - [x] Add `./learn-allium watch` / `./learn-allium alliumlings` aliases.
 - [x] Add `./learn-allium watch --smoke` validation.
-- [ ] Add true file-watch auto-rerun on save.
+- [x] Add true file-watch auto-rerun on save.
+  - [x] Add `7` / `--auto-watch` polling watcher for current exercise changes.
 - [ ] Add more exercises: temporal behavior, distill-from-code, refactor, obligations.
+  - [x] Add Exercise 03: `03_temporal_overdue`.
 
 ## Milestone 3 — Beginner lesson sequence
 
@@ -78,7 +81,7 @@ Definition of done: a learner can complete a 60–90 minute guided intro without
   - [ ] Show `allium.rule.unreachableTrigger` intentionally.
   - [ ] Add a `surface provides:` block to fix it.
 - [ ] Lesson 03: temporal behavior.
-  - [ ] Use a tiny lending or access-grant expiry example.
+  - [x] Use a tiny lending overdue example in Alliumlings Exercise 03.
   - [ ] Teach temporal guards and avoiding re-fire/races.
 - [ ] Lesson 04: distill from code with Pi + Allium skill.
   - [ ] Copy `examples/code/pinned-installer.sh` into workspace.
@@ -151,14 +154,15 @@ Tutor-specific gates to add:
 
 ```bash
 ./learn-allium doctor
+./learn-allium --smoke
+./learn-allium tmux --smoke
 ./learn-allium lesson-01 --smoke
-./learn-allium watch --smoke
 ```
 
 ## Open decisions
 
 - [x] Should the MVP tutor be a Pi extension UI, a plain terminal script, or both?
-  - Decision: default to terminal/tmux app; keep Pi extension as fallback mode.
+  - Decision: default to single-terminal Alliumlings; keep tmux/Pi modes as optional fallbacks.
 - [ ] Should strict mode use `PI_CODING_AGENT_DIR=$RUN/pi-agent`?
   - Normal mode can reuse user Pi auth; strict mode should isolate auth/settings too.
 - [ ] How much bash should the lesson agent get?
