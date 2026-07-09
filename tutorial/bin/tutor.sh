@@ -7,6 +7,7 @@ STARTER="${ALLIUM_TUTOR_STARTER:-$WORKSPACE/library-starter.allium}"
 SOLUTION="${ALLIUM_TUTOR_SOLUTION:-$WORKSPACE/../library-solution.allium}"
 FIXTURE="${ALLIUM_TUTOR_FIXTURE:-$STARTER}"
 PI_PANE="${ALLIUM_TUTOR_PI_PANE:-}"
+TMUX_SESSION="${ALLIUM_TUTOR_TMUX_SESSION:-}"
 EDITOR_CMD="${VISUAL:-${EDITOR:-nano}}"
 
 cd "$WORKSPACE"
@@ -166,7 +167,11 @@ send_to_pi() {
     return 0
   fi
 
-  tmux send-keys -t "$PI_PANE" "$prompt" C-m
+  # Pi treats a prompt plus C-m sent in one tmux call as editor input without
+  # submission. Send literal text first, then a real Enter after a short delay.
+  tmux send-keys -t "$PI_PANE" -l -- "$prompt"
+  sleep 0.2
+  tmux send-keys -t "$PI_PANE" Enter
   printf '%bSent this prompt to the Pi pane:%b\n' "$GREEN$BOLD" "$RESET"
   echo
   printf '%b%s%b\n' "$MAGENTA" "$prompt" "$RESET"
@@ -271,12 +276,10 @@ quit_tutor() {
       clear
       printf '%bClosing Allium Tutor...%b\n' "$GREEN" "$RESET"
       sleep 0.3
-      if [[ -n "${TMUX:-}" ]] && command -v tmux >/dev/null 2>&1; then
-        local session
-        session="$(tmux display-message -p '#S' 2>/dev/null || true)"
-        if [[ -n "$session" ]]; then
-          tmux kill-session -t "$session"
-        fi
+      # Only close the tmux session explicitly created by the tutor launcher.
+      # Never kill an unrelated host session such as Patina's Pi wrapper.
+      if [[ -n "$TMUX_SESSION" ]] && command -v tmux >/dev/null 2>&1; then
+        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       fi
       exit 0
       ;;

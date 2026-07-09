@@ -14,7 +14,15 @@ From the repo root:
 
 That one command runs the setup check, creates an isolated lesson workspace, and opens **Alliumlings** in the current terminal.
 
-Stay in the app for the training loop. When you choose "Ask Pi", the app prints a copyable prompt. Choose `7` to auto-rerun checks when the current exercise file is saved from another terminal. If you want the older two-pane helper, run `./learn-allium tmux`.
+Stay in the app for the training loop. When you choose "Ask Pi", an animated indicator stays visible while Pi prepares an inline answer. If Pi or the Allium skill is unavailable, the app prints a copyable fallback prompt instead. Choose `7` to auto-rerun checks when the current exercise file is saved from another terminal. For a persistent two-pane helper, run `./learn-allium tmux`.
+
+For faster inline help, choose any model shown by `pi --list-models` and lower the thinking level:
+
+```bash
+./learn-allium --model openai-codex/gpt-5.4-mini --thinking low
+```
+
+If `--model` is omitted, the tutor uses your normal Pi model. Tutor requests default to `--thinking low`; supported values are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`. These options also work in the `tmux`, `lesson-01`, and `pi` modes.
 
 Setup check only:
 
@@ -86,7 +94,7 @@ Each run creates a disposable directory under `.tutorial/runs/`, for example:
   tmp/             # lesson TMPDIR
 ```
 
-In default mode, no tmux or Pi process is launched. The standalone Alliumlings app (`tutorial/bin/alliumlings.sh`) runs in the current terminal, and "Ask Pi" prints a copyable prompt.
+In default mode, no persistent tmux or Pi process is launched. The standalone Alliumlings app (`tutorial/bin/alliumlings.sh`) runs in the current terminal, and "Ask Pi" starts an isolated one-shot Pi request when available. If Pi or the copied Allium skill is unavailable, it prints a copyable prompt instead.
 
 In optional Pi helper modes, Pi is launched with:
 

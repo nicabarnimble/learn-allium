@@ -66,7 +66,7 @@ Enter  check my work
 q      quit
 ```
 
-If a learner chooses `3`, the app prints a prompt they can copy into Pi. For the older paired-pane experience:
+If a learner chooses `3`, the app asks Pi inline when available; otherwise it prints a prompt they can copy into Pi. For the persistent paired-pane experience:
 
 ```bash
 ./learn-allium tmux

@@ -107,11 +107,20 @@ Start the canonical Rustlings-style Alliumlings practice:
 ./learn-allium
 ```
 
-This opens exercises in the current terminal. Pi help is optional: choose “Ask Pi” to get a copyable prompt. Use menu option `7` or `./learn-allium --auto-watch` for save-triggered rechecks, or run the optional two-pane mode:
+This opens exercises in the current terminal. Pi help is optional: choose “Ask Pi” for an inline answer when Pi and the Allium skill are available; otherwise the tutor shows a copyable fallback prompt. Use menu option `7` or `./learn-allium --auto-watch` for save-triggered rechecks, or run the optional two-pane mode:
 
 ```bash
 ./learn-allium tmux
 ```
+
+Choose a faster model and reasoning level for Pi help:
+
+```bash
+pi --list-models
+./learn-allium --model openai-codex/gpt-5.4-mini --thinking low
+```
+
+The tutor inherits your normal Pi model when `--model` is omitted and defaults tutor requests to `--thinking low`. The same flags work with `./learn-allium tmux`, `lesson-01`, and `pi`.
 
 For setup checks only:
 

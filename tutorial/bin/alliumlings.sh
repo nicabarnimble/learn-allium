@@ -8,6 +8,10 @@ if [[ -d "$RUN_DIR" ]]; then
   RUN_DIR="$(cd "$RUN_DIR" && pwd -P)"
 fi
 PI_PANE="${ALLIUM_TUTOR_PI_PANE:-}"
+TMUX_SESSION="${ALLIUM_TUTOR_TMUX_SESSION:-}"
+REPO_ROOT="${ALLIUM_TUTOR_REPO_ROOT:-}"
+PI_MODEL="${ALLIUM_TUTOR_PI_MODEL:-}"
+PI_THINKING="${ALLIUM_TUTOR_PI_THINKING:-low}"
 EDITOR_CMD="${VISUAL:-${EDITOR:-nano}}"
 EX_DIR="$WORKSPACE/exercises"
 META_DIR="$WORKSPACE/.alliumlings"
@@ -241,15 +245,80 @@ list_exercises() {
   done
 }
 
+wait_with_spinner() {
+  local pid="$1"
+  local label="$2"
+
+  if [[ ! -t 1 ]]; then
+    wait "$pid"
+    return $?
+  fi
+
+  local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r%b%s%b %s' "$CYAN$BOLD" "${frames[$i]}" "$RESET" "$label"
+    i=$(((i + 1) % ${#frames[@]}))
+    sleep 0.12
+  done
+
+  local status=0
+  wait "$pid" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    printf '\r\033[2K%b✓%b Pi answered.\n\n' "$GREEN$BOLD" "$RESET"
+  else
+    printf '\r\033[2K%b✗%b Pi stopped with exit %s.\n\n' "$RED$BOLD" "$RESET" "$status"
+  fi
+  return "$status"
+}
+
 ask_pi() {
   header
   local prompt="/skill:allium We are doing Alliumlings exercise $(current_name). Please explain what is wrong in exercises/${FILES[$(current_index)]} slowly. Do not edit unless I ask. Give one small next step."
   if [[ -n "$PI_PANE" ]] && command -v tmux >/dev/null 2>&1 && tmux display-message -p -t "$PI_PANE" '#{pane_id}' >/dev/null 2>&1; then
-    tmux send-keys -t "$PI_PANE" "$prompt" C-m
+    # Literal input plus a delayed Enter is required by Pi's TUI. Sending the
+    # prompt and C-m in one tmux call only fills the editor without submitting.
+    tmux send-keys -t "$PI_PANE" -l -- "$prompt"
+    sleep 0.2
+    tmux send-keys -t "$PI_PANE" Enter
     printf '%bSent prompt to Pi pane.%b\n\n' "$GREEN$BOLD" "$RESET"
     printf '%b%s%b\n' "$MAGENTA" "$prompt" "$RESET"
+  elif command -v pi >/dev/null 2>&1 && [[ -f "$RUN_DIR/skills/allium/SKILL.md" && -f "$REPO_ROOT/tutorial/pi/isolation-guard.ts" ]]; then
+    printf '%bAsking Pi…%b\n\n' "$GREEN$BOLD" "$RESET"
+    local status
+    local -a pi_selection_args=(--thinking "$PI_THINKING")
+    if [[ -n "$PI_MODEL" ]]; then
+      pi_selection_args+=(--model "$PI_MODEL")
+    fi
+    printf '%bModel:%b %s  %bThinking:%b %s\n\n' "$DIM" "$RESET" "${PI_MODEL:-user default}" "$DIM" "$RESET" "$PI_THINKING"
+    local output_file
+    output_file="$(mktemp "$RUN_DIR/tmp/ask-pi.XXXXXX")"
+    set +e
+    pi "${pi_selection_args[@]}" \
+      --session-dir "$RUN_DIR/sessions" \
+      --no-context-files \
+      --no-prompt-templates \
+      --no-skills \
+      --skill "$RUN_DIR/skills/allium/SKILL.md" \
+      --no-extensions \
+      -e "$REPO_ROOT/tutorial/pi/isolation-guard.ts" \
+      --no-approve \
+      --tools read,edit,write,bash \
+      --name "Alliumlings: Inline Pi Help" \
+      --append-system-prompt "Teach slowly. Do not edit unless explicitly asked. Keep the answer focused on the current exercise." \
+      -p "$prompt" >"$output_file" 2>&1 &
+    local pi_pid=$!
+    wait_with_spinner "$pi_pid" "Pi is thinking…"
+    status=$?
+    set -e
+    cat "$output_file"
+    rm -f "$output_file"
+    if [[ "$status" -ne 0 ]]; then
+      echo
+      printf '%bPi could not answer (exit %s). Copy this prompt into Pi:%b\n\n%s\n' "$YELLOW$BOLD" "$status" "$RESET" "$prompt"
+    fi
   else
-    printf '%bCopy this into Pi:%b\n\n%s\n' "$YELLOW$BOLD" "$RESET" "$prompt"
+    printf '%bPi or the Allium skill is unavailable. Copy this into Pi:%b\n\n%s\n' "$YELLOW$BOLD" "$RESET" "$prompt"
   fi
 }
 
@@ -259,9 +328,11 @@ quit_all() {
   read -r -p "Quit Alliumlings? [y/N] " answer || answer=""
   case "$answer" in
     y|Y|yes|YES)
-      if [[ -n "${TMUX:-}" ]] && command -v tmux >/dev/null 2>&1; then
-        session="$(tmux display-message -p '#S' 2>/dev/null || true)"
-        [[ -n "$session" ]] && tmux kill-session -t "$session"
+      # Only close a tmux session explicitly created by the tutor launcher.
+      # The single-terminal mode may itself run inside an unrelated tmux host
+      # (for example Patina's Pi session), which must remain alive.
+      if [[ -n "$TMUX_SESSION" ]] && command -v tmux >/dev/null 2>&1; then
+        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       fi
       exit 0 ;;
   esac

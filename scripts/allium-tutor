@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PI_MODEL="${ALLIUM_TUTOR_PI_MODEL:-}"
+PI_THINKING="${ALLIUM_TUTOR_PI_THINKING:-low}"
+
 usage() {
   cat <<'USAGE'
 Alliumlings — resilient Allium training
@@ -26,13 +29,17 @@ Commands:
   doctor       Check required Allium tooling and optional Pi/tmux support.
 
 Options:
-  --smoke      Prepare a run and verify lesson fixtures without launching Pi.
-  --auto-watch Rerun checks when the current exercise file changes.
-  --strict     Use a per-run PI_CODING_AGENT_DIR. This isolates Pi auth/settings too.
-               You may need to provide API keys or login again.
+  --smoke           Prepare a run and verify lesson fixtures without launching Pi.
+  --auto-watch      Rerun checks when the current exercise file changes.
+  --model MODEL     Pi model ID or pattern, optionally provider/model.
+  --thinking LEVEL  Pi thinking: off, minimal, low, medium, high, or xhigh (default: low).
+  --strict          Use a per-run PI_CODING_AGENT_DIR. This isolates Pi auth/settings too.
+                    You may need to provide API keys or login again.
 
 Environment:
-  ALLIUM_SKILL_PATH   Optional path to the Allium SKILL.md to copy into the run.
+  ALLIUM_SKILL_PATH          Optional path to the Allium SKILL.md to copy into the run.
+  ALLIUM_TUTOR_PI_MODEL      Default value for --model.
+  ALLIUM_TUTOR_PI_THINKING   Default value for --thinking (default: low).
 USAGE
 }
 
@@ -112,11 +119,12 @@ preflight() {
 
   if command -v pi >/dev/null 2>&1; then
     echo "pi:     $(pi --version 2>/dev/null || echo installed)"
+    echo "pi help: model=${PI_MODEL:-user-default} thinking=$PI_THINKING"
   elif [[ "$profile" == "pi" || "$profile" == "tmux" ]]; then
     echo "error: required command not found: pi" >&2
     return 1
   else
-    echo "pi:     not found (optional; Ask Pi will show a copyable prompt)"
+    echo "pi:     not found (optional; Ask Pi will show a copyable fallback prompt)"
   fi
 
   local skill=""
@@ -245,6 +253,13 @@ launch_lesson_01() {
       --smoke) smoke=true ;;
       --strict) strict=true ;;
       --welcome) show_welcome=true ;;
+      --model)
+        [[ $# -ge 2 && -n "$2" ]] || { echo "error: --model requires a value" >&2; return 1; }
+        PI_MODEL="$2"; shift ;;
+      --thinking)
+        [[ $# -ge 2 ]] || { echo "error: --thinking requires a value" >&2; return 1; }
+        case "$2" in off|minimal|low|medium|high|xhigh) PI_THINKING="$2" ;; *) echo "error: invalid thinking level: $2" >&2; return 1 ;; esac
+        shift ;;
       -h|--help) usage; return 0 ;;
       *) echo "error: unknown option for lesson-01: $1" >&2; usage >&2; return 1 ;;
     esac
@@ -293,10 +308,15 @@ launch_lesson_01() {
     env_args+=("PI_CODING_AGENT_DIR=$run_dir/pi-agent")
   fi
 
+  local -a pi_selection_args=(--thinking "$PI_THINKING")
+  if [[ -n "$PI_MODEL" ]]; then
+    pi_selection_args+=(--model "$PI_MODEL")
+  fi
+
   (
     cd "$workspace"
     env "${env_args[@]}" \
-      pi \
+      pi "${pi_selection_args[@]}" \
         --session-dir "$run_dir/sessions" \
         --no-context-files \
         --no-prompt-templates \
@@ -408,6 +428,13 @@ launch_alliumlings() {
       --auto-watch|--watch-file|--watch-save) runner_mode="auto-watch" ;;
       --tmux|--panes) panes=true ;;
       --no-tmux|--single) panes=false ;;
+      --model)
+        [[ $# -ge 2 && -n "$2" ]] || { echo "error: --model requires a value" >&2; return 1; }
+        PI_MODEL="$2"; shift ;;
+      --thinking)
+        [[ $# -ge 2 ]] || { echo "error: --thinking requires a value" >&2; return 1; }
+        case "$2" in off|minimal|low|medium|high|xhigh) PI_THINKING="$2" ;; *) echo "error: invalid thinking level: $2" >&2; return 1 ;; esac
+        shift ;;
       -h|--help) usage; return 0 ;;
       *) echo "error: unknown option for alliumlings: $1" >&2; usage >&2; return 1 ;;
     esac
@@ -421,7 +448,7 @@ launch_alliumlings() {
       echo "This opens tiny failing Allium exercises on the left and Pi help on the right."
     else
       echo "This opens tiny failing Allium exercises in this terminal."
-      echo "Pi help is optional: choose 'Ask Pi' to get a copyable prompt."
+      echo "Pi help is optional: 'Ask Pi' answers inline when available, with a copyable fallback."
     fi
     echo
   fi
@@ -458,12 +485,16 @@ launch_alliumlings() {
       export ALLIUM_TUTOR_WORKSPACE="$workspace"
       export ALLIUM_TUTOR_HOME="$run_dir/home"
       export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+      export ALLIUM_TUTOR_PI_MODEL="$PI_MODEL"
+      export ALLIUM_TUTOR_PI_THINKING="$PI_THINKING"
       exec "$root/tutorial/bin/alliumlings.sh" "$runner_mode"
     )
     return 0
   fi
 
-  local session session_name pi_script tutor_script
+  local session session_name pi_script tutor_script pi_model_q pi_thinking_q
+  printf -v pi_model_q '%q' "$PI_MODEL"
+  printf -v pi_thinking_q '%q' "$PI_THINKING"
   session_name="alliumlings-$(basename "$run_dir" | tr -cd '[:alnum:]-')"
   session="$session_name"
   pi_script="$run_dir/start-pi-pane.sh"
@@ -480,6 +511,8 @@ export ALLIUM_TUTOR_RUN_DIR="$run_dir"
 export ALLIUM_TUTOR_WORKSPACE="$workspace"
 export ALLIUM_TUTOR_HOME="$run_dir/home"
 export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+export ALLIUM_TUTOR_PI_MODEL=$pi_model_q
+export ALLIUM_TUTOR_PI_THINKING=$pi_thinking_q
 EOF
 
   if [[ "$strict" == true ]]; then
@@ -488,7 +521,11 @@ EOF
   fi
 
   cat >> "$pi_script" <<EOF
-exec pi \\
+pi_selection_args=(--thinking "\$ALLIUM_TUTOR_PI_THINKING")
+if [[ -n "\$ALLIUM_TUTOR_PI_MODEL" ]]; then
+  pi_selection_args+=(--model "\$ALLIUM_TUTOR_PI_MODEL")
+fi
+exec pi "\${pi_selection_args[@]}" \\
   --session-dir "$run_dir/sessions" \\
   --no-context-files \\
   --no-prompt-templates \\
@@ -511,7 +548,10 @@ export ALLIUM_TUTOR_RUN_DIR="$run_dir"
 export ALLIUM_TUTOR_WORKSPACE="$workspace"
 export ALLIUM_TUTOR_HOME="$run_dir/home"
 export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+export ALLIUM_TUTOR_PI_MODEL=$pi_model_q
+export ALLIUM_TUTOR_PI_THINKING=$pi_thinking_q
 export ALLIUM_TUTOR_PI_PANE="\${ALLIUM_TUTOR_PI_PANE:?}"
+export ALLIUM_TUTOR_TMUX_SESSION="$session"
 exec "$root/tutorial/bin/alliumlings.sh" "$runner_mode"
 EOF
 
@@ -549,6 +589,13 @@ launch_tmux_lesson_01() {
       --smoke) smoke=true ;;
       --strict) strict=true ;;
       --welcome) show_welcome=true ;;
+      --model)
+        [[ $# -ge 2 && -n "$2" ]] || { echo "error: --model requires a value" >&2; return 1; }
+        PI_MODEL="$2"; shift ;;
+      --thinking)
+        [[ $# -ge 2 ]] || { echo "error: --thinking requires a value" >&2; return 1; }
+        case "$2" in off|minimal|low|medium|high|xhigh) PI_THINKING="$2" ;; *) echo "error: invalid thinking level: $2" >&2; return 1 ;; esac
+        shift ;;
       -h|--help) usage; return 0 ;;
       *) echo "error: unknown option for tmux lesson-01: $1" >&2; usage >&2; return 1 ;;
     esac
@@ -587,7 +634,9 @@ MSG
   session_name="allium-tutor-$(basename "$run_dir" | tr -cd '[:alnum:]-')"
   session="$session_name"
 
-  local pi_script tutor_script
+  local pi_script tutor_script pi_model_q pi_thinking_q
+  printf -v pi_model_q '%q' "$PI_MODEL"
+  printf -v pi_thinking_q '%q' "$PI_THINKING"
   pi_script="$run_dir/start-pi-pane.sh"
   tutor_script="$run_dir/start-tutor-pane.sh"
 
@@ -607,6 +656,8 @@ export ALLIUM_TUTOR_FIXTURE="$root/tutorial/fixtures/$lesson_id/library-starter.
 export ALLIUM_TUTOR_LESSON_MD="$root/tutorial/lessons/$lesson_id.md"
 export ALLIUM_TUTOR_HOME="$run_dir/home"
 export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+export ALLIUM_TUTOR_PI_MODEL=$pi_model_q
+export ALLIUM_TUTOR_PI_THINKING=$pi_thinking_q
 EOF
 
   if [[ "$strict" == true ]]; then
@@ -617,7 +668,11 @@ EOF
   fi
 
   cat >> "$pi_script" <<EOF
-exec pi \\
+pi_selection_args=(--thinking "\$ALLIUM_TUTOR_PI_THINKING")
+if [[ -n "\$ALLIUM_TUTOR_PI_MODEL" ]]; then
+  pi_selection_args+=(--model "\$ALLIUM_TUTOR_PI_MODEL")
+fi
+exec pi "\${pi_selection_args[@]}" \\
   --session-dir "$run_dir/sessions" \\
   --no-context-files \\
   --no-prompt-templates \\
@@ -645,7 +700,10 @@ export ALLIUM_TUTOR_FIXTURE="$root/tutorial/fixtures/$lesson_id/library-starter.
 export ALLIUM_TUTOR_LESSON_MD="$root/tutorial/lessons/$lesson_id.md"
 export ALLIUM_TUTOR_HOME="$run_dir/home"
 export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+export ALLIUM_TUTOR_PI_MODEL=$pi_model_q
+export ALLIUM_TUTOR_PI_THINKING=$pi_thinking_q
 export ALLIUM_TUTOR_PI_PANE="\${ALLIUM_TUTOR_PI_PANE:?}"
+export ALLIUM_TUTOR_TMUX_SESSION="$session"
 exec "$root/tutorial/bin/tutor.sh"
 EOF
 
