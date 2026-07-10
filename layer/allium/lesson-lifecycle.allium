@@ -6,6 +6,7 @@
 --   - incident, prediction, evidence, concept, workbench, verification, consequence, and transfer
 --   - deterministic evaluation of repair and transfer submissions
 --   - observable completion only after both repair and transfer pass
+--   - durable acceptance of learner-visible transitions and fail-closed restoration
 -- Excludes:
 --   - course authoring and publication
 --   - AI coaching and hint generation
@@ -30,6 +31,23 @@ contract DeterministicLessonEvaluation {
     @guidance
         -- Language validity and structural analysis may contribute evidence, but neither
         -- is sufficient on its own to establish that the intended behaviour was specified.
+}
+
+contract DurableLessonProgress {
+    commit: (run: LessonRun) -> Boolean
+    restore: (learner: Learner, lesson: Lesson) -> LessonRun?
+
+    @invariant CommitBeforeVisibility
+        -- A candidate run state is visible only after the complete state has been
+        -- accepted by durable storage.
+
+    @invariant FailureClosed
+        -- If durable storage rejects or cannot record a candidate state, the prior
+        -- run remains authoritative and no effect licensed by the candidate proceeds.
+
+    @invariant ConsistentRestoration
+        -- Restoration accepts only state for the same authored lesson that satisfies
+        -- the lifecycle and evaluation invariants. Invalid state is never silently used.
 }
 
 ------------------------------------------------------------
@@ -76,6 +94,9 @@ entity LessonRun {
     has_prediction: prediction != null
     has_passing_repair: submissions.any(s => s.kind = repair and s.status = passed)
     has_passing_transfer: submissions.any(s => s.kind = transfer and s.status = passed)
+    has_pending_repair: submissions.any(s => s.kind = repair and s.status = pending)
+    has_pending_transfer: submissions.any(s => s.kind = transfer and s.status = pending)
+    has_transfer_submission: submissions.any(s => s.kind = transfer)
 
     transitions stage {
         incident -> prediction
@@ -132,6 +153,7 @@ rule RecordPredictionAndRevealEvidence {
     requires: run.learner = learner
     requires: run.stage = prediction
     requires: not run.has_prediction
+    requires: length(response) > 0
     ensures: Prediction.created(run: run, response: response)
     ensures: run.stage = evidence
 }
@@ -155,6 +177,7 @@ rule SubmitRepairForVerification {
     when: LearnerSubmitsRepair(learner, run, answer)
     requires: run.learner = learner
     requires: run.stage = workbench
+    requires: length(answer) > 0
     ensures: Submission.created(run: run, kind: repair, answer: answer, status: pending)
     ensures: run.stage = verifying_repair
 }
@@ -199,6 +222,7 @@ rule SubmitTransferForVerification {
     when: LearnerSubmitsTransfer(learner, run, answer)
     requires: run.learner = learner
     requires: run.stage = transfer
+    requires: length(answer) > 0
     ensures: Submission.created(run: run, kind: transfer, answer: answer, status: pending)
     ensures: run.stage = verifying_transfer
 }
@@ -257,6 +281,37 @@ invariant ConsequenceRequiresPassingRepair {
 invariant CompletionRequiresPassingTransfer {
     for run in LessonRuns:
         run.stage = completed implies run.has_passing_transfer
+}
+
+invariant EarlyStagesHaveNoSubmissions {
+    for run in LessonRuns:
+        run.stage in {incident, prediction, evidence, concept}
+            implies run.submissions.count = 0
+}
+
+invariant PendingRepairMatchesVerificationStage {
+    for run in LessonRuns:
+        run.has_pending_repair implies run.stage = verifying_repair
+}
+
+invariant RepairVerificationHasPendingRepair {
+    for run in LessonRuns:
+        run.stage = verifying_repair implies run.has_pending_repair
+}
+
+invariant PendingTransferMatchesVerificationStage {
+    for run in LessonRuns:
+        run.has_pending_transfer implies run.stage = verifying_transfer
+}
+
+invariant TransferVerificationHasPendingTransfer {
+    for run in LessonRuns:
+        run.stage = verifying_transfer implies run.has_pending_transfer
+}
+
+invariant TransferSubmissionRequiresPassingRepair {
+    for run in LessonRuns:
+        run.has_transfer_submission implies run.has_passing_repair
 }
 
 ------------------------------------------------------------
@@ -325,6 +380,7 @@ surface LessonExperience {
 
     contracts:
         fulfils DeterministicLessonEvaluation
+        fulfils DurableLessonProgress
 
     related:
         for submission in run.submissions:
@@ -345,6 +401,18 @@ surface LessonExperience {
     @guarantee EvaluationDeterminesProgression
         -- Only passing lesson-intent evaluation advances a repair to consequence or
         -- advances a transfer case to completion.
+
+    @guarantee DurabilityPrecedesProgression
+        -- A stage, learner answer, or evaluation result becomes visible only after the
+        -- complete resulting run has been durably accepted.
+
+    @guarantee DurabilityFailureDoesNotAdvance
+        -- If progress cannot be durably recorded, the prior run remains visible and
+        -- no completion or other effect licensed by the candidate state proceeds.
+
+    @guarantee InvalidRestorationIsRejected
+        -- Progress for another authored lesson or progress that violates lifecycle
+        -- invariants is not restored and does not silently replace authoritative state.
 }
 
 surface SubmissionFeedback {
