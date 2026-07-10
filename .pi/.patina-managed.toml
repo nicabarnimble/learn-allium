@@ -1,0 +1,4 @@
+interface = "pi"
+bundle = "pi"
+version = "builtin-pi-prompts"
+managed_by = "patina ai refresh"
