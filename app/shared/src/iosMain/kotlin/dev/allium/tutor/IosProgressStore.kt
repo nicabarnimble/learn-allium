@@ -2,7 +2,7 @@ package dev.allium.tutor
 
 import platform.Foundation.NSUserDefaults
 
-private class IosLessonProgressStore : LessonProgressStore {
+internal class IosLessonProgressStore : LessonProgressStore {
     private val defaults = NSUserDefaults.standardUserDefaults
 
     override suspend fun read(lessonId: String): String? =
@@ -14,6 +14,3 @@ private class IosLessonProgressStore : LessonProgressStore {
 
     private fun String.storageKey(): String = "lesson-progress.$this"
 }
-
-actual fun createPlatformLessonProgressStore(): LessonProgressStore =
-    IosLessonProgressStore()

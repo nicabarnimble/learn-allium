@@ -38,12 +38,6 @@ Canonical guidance:
 
 ## Platform sequence
 
-- [ ] Before adding a web target, align the application with the current KMP module structure:
-  - [ ] Rename the mixed `composeApp` module to the pure KMP library `shared`.
-  - [ ] Add a JVM `desktopApp` module for the desktop entry point, Preferences adapter, and distribution configuration.
-  - [ ] Keep `iosApp` as the Swift/Xcode host and update its framework build references from `composeApp` to `shared`.
-  - [ ] Inject host-owned platform adapters into shared application code where that makes ownership clearer.
-  - [ ] Update commands, documentation, packaging checks, and generated-resource references after the move.
 - [ ] Add Android after the Apple and desktop lifecycle trial is complete.
 - [ ] Evaluate Compose Wasm against the lesson contract and interaction requirements.
 - [ ] Use a Kotlin/JS or TypeScript/PWA renderer if it provides the stronger web product.
@@ -91,7 +85,7 @@ done < <(find exercises -path '*/solution/*.allium' | sort)
 ./learn-allium --smoke
 
 cd app
-./gradlew :composeApp:desktopTest
-./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
-./gradlew :composeApp:packageDmg
+./gradlew :shared:desktopTest
+./gradlew :shared:linkDebugFrameworkIosSimulatorArm64
+./gradlew :desktopApp:packageDmg
 ```

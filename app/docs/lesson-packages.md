@@ -45,11 +45,11 @@ Run package and lifecycle tests with:
 
 ```bash
 cd app
-./gradlew :composeApp:desktopTest
+./gradlew :shared:desktopTest
 ```
 
 Launch the authored package at desktop size with:
 
 ```bash
-./gradlew :composeApp:run
+./gradlew :desktopApp:run
 ```

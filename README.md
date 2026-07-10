@@ -20,8 +20,8 @@ Canonical guardrails:
 - [Temporal-overdue vertical-slice storyboard](docs/storyboards/temporal-overdue.md)
 
 The KMP application lives in [`app/`](app/). Run its shared tests with
-`cd app && ./gradlew :composeApp:desktopTest`, or launch the desktop slice with
-`cd app && ./gradlew :composeApp:run`.
+`cd app && ./gradlew :shared:desktopTest`, or launch the desktop slice with
+`cd app && ./gradlew :desktopApp:run`.
 
 The Allium specification remains implementation-independent. Platform choices
 belong in ADRs; observable learner behaviour belongs in `layer/allium/`.

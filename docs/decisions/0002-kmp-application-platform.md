@@ -52,7 +52,7 @@ app/
 └── webApp/       # Compose web host when that renderer is selected
 ```
 
-The current application should adopt the `shared` and `desktopApp` boundary before adding a web target. Host modules own application entry points, packaging, signing, and adapters that can be injected at the host boundary. The shared library owns behaviour, reusable presentation, and any narrow platform implementation that must remain in a KMP source set. The iOS framework remains the umbrella KMP artifact consumed by `iosApp`.
+The application uses the `shared` and `desktopApp` boundary. Host modules own application entry points, packaging, signing, and adapters that can be injected at the host boundary. The shared library owns behaviour, reusable presentation, and any narrow platform implementation that must remain in a KMP source set. The iOS framework is the umbrella KMP artifact consumed by `iosApp`.
 
 Do not pre-emptively split the shared library into logic, UI, feature, or layer modules. Introduce a Compose-free shared-logic boundary when a real native or non-Compose renderer needs it, rather than in anticipation of one. A separate TypeScript/PWA client consumes the stable lesson contract and does not require Kotlin module symmetry.
 

@@ -2,7 +2,7 @@ package dev.allium.tutor
 
 import java.util.prefs.Preferences
 
-private class DesktopLessonProgressStore : LessonProgressStore {
+internal class DesktopLessonProgressStore : LessonProgressStore {
     private val preferences = Preferences.userRoot().node("dev/allium/tutor/progress")
 
     override suspend fun read(lessonId: String): String? =
@@ -13,6 +13,3 @@ private class DesktopLessonProgressStore : LessonProgressStore {
         preferences.flush()
     }
 }
-
-actual fun createPlatformLessonProgressStore(): LessonProgressStore =
-    DesktopLessonProgressStore()

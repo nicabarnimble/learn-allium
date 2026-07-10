@@ -22,7 +22,7 @@ Keep concerns on the correct decision surface:
 
 After changing `.allium` files, run `allium check layer/allium`. At behavioural checkpoints, also run `allium analyse layer/allium`.
 
-The Kotlin Multiplatform application lives in `app/`. Run shared desktop tests with `cd app && ./gradlew :composeApp:desktopTest`. Verify the shared iOS framework with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64`.
+The Kotlin Multiplatform application lives in `app/`. Run shared desktop tests with `cd app && ./gradlew :shared:desktopTest`. Verify the shared iOS framework with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64`.
 
 ## Working Principles (Binding)
 

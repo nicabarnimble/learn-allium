@@ -64,7 +64,7 @@ suspend fun loadTemporalOverduePackage(): LessonPackage =
 
 fun createTutorApplication(
     packageContent: LessonPackage,
-    progressStore: LessonProgressStore = createPlatformLessonProgressStore(),
+    progressStore: LessonProgressStore,
 ): TutorApplication = TutorApplication(
     packageContent = packageContent,
     engine = LessonEngine(PackageLessonEvaluator(packageContent.evaluation)),

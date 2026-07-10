@@ -11,8 +11,6 @@ interface LessonProgressStore {
     suspend fun write(lessonId: String, snapshot: String)
 }
 
-expect fun createPlatformLessonProgressStore(): LessonProgressStore
-
 class InvalidProgressSnapshotException(
     message: String,
     cause: Throwable? = null,

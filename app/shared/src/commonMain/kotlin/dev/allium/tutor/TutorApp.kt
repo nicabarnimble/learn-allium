@@ -87,12 +87,12 @@ private sealed interface TutorApplicationLoadState {
 }
 
 @Composable
-fun TutorApp() {
+fun TutorApp(progressStore: LessonProgressStore) {
     var loadState by remember { mutableStateOf<TutorApplicationLoadState>(TutorApplicationLoadState.Loading) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(progressStore) {
         loadState = try {
-            val application = createTutorApplication(loadTemporalOverduePackage())
+            val application = createTutorApplication(loadTemporalOverduePackage(), progressStore)
             TutorApplicationLoadState.Ready(
                 application = application,
                 initialState = application.restoreState(),
