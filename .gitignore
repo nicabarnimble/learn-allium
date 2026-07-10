@@ -21,6 +21,8 @@ __pycache__/
 # Build outputs
 dist/
 build/
+.gradle/
+local.properties
 *.o
 *.so
 *.dylib
@@ -30,6 +32,9 @@ build/
 # IDE and editor files
 .idea/
 .vscode/
+**/xcuserdata/
+**/*.xcuserstate
+DerivedData/
 *.iml
 *.swp
 *.swo

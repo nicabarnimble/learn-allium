@@ -1,0 +1,126 @@
+{
+  "formatVersion": 1,
+  "revision": 1,
+  "lesson": {
+    "id": "temporal-overdue",
+    "title": "The notice that would not stop",
+    "incident": {
+      "body": {
+        "paragraphs": [
+          "At 08:01, Mara received an overdue notice.\nAt 08:02, she received another.",
+          "By noon, the library had sent 240 of them—one for every minute the book remained late.",
+          "Nothing had crashed. The rule was behaving exactly as written, which was unfortunately the problem."
+        ]
+      },
+      "actionLabel": "Inspect what happened"
+    },
+    "prediction": {
+      "prompt": "What would you inspect first, and what do you expect to find?",
+      "placeholder": "Commit to an explanation before seeing the evidence.",
+      "actionLabel": "Open the evidence",
+      "emptyFeedback": "Make a prediction before opening the evidence."
+    },
+    "evidence": {
+      "body": {
+        "paragraphs": [
+          "when: _: Book.due_at <= now",
+          "08:01 — the condition became true; BookOverdue was emitted.\n08:02 — the condition was still true; BookOverdue was emitted again.\n12:00 — the condition was still true; BookOverdue was emitted again.",
+          "The clock changed. The rule's eligibility did not."
+        ]
+      },
+      "predictionLabel": "Your prediction",
+      "actionLabel": "Name what is missing"
+    },
+    "concept": {
+      "name": "Temporal guards",
+      "explanation": {
+        "paragraphs": [
+          "A time comparison can remain true for hours or years. A rule that only asks whether the book is late has no memory of acting on the answer.",
+          "In Allium, the temporal trigger makes the rule eligible. A state guard limits that eligibility to borrowed books; the state change then makes the guard false after one successful evaluation."
+        ]
+      },
+      "actionLabel": "Repair the rule"
+    },
+    "workbench": {
+      "prompt": "Repair the rule so a borrowed book becomes overdue exactly once and emits the notice event.",
+      "starter": "rule MarkBookOverdue {\n    when: _: Book.due_at <= now\n\n    -- Add the borrowed-state guard, overdue state change,\n    -- and BookOverdue event.\n}",
+      "editorLabel": "Allium repair",
+      "actionLabel": "Verify the behaviour",
+      "emptyFeedback": "The repair cannot be empty.",
+      "verificationMessage": "Checking the behaviour, not just the syntax…"
+    },
+    "consequence": {
+      "body": {
+        "paragraphs": [
+          "At 08:01, the borrowed book became overdue and Mara received one notice.",
+          "At 08:02, the date condition was still true—but the book was no longer borrowed. The rule was no longer eligible.",
+          "The fix was not a faster notification service. It was a more honest description of when the behaviour may happen."
+        ]
+      },
+      "actionLabel": "Try it somewhere else"
+    },
+    "transfer": {
+      "prompt": {
+        "paragraphs": [
+          "An access grant should expire after its deadline. Write the essential temporal rule using grant.expires_at, guarding the active state and producing expired.",
+          "The nouns changed. The behavioural problem did not."
+        ]
+      },
+      "starter": "",
+      "placeholder": "Write the essential Allium rule.",
+      "editorLabel": "Transfer answer",
+      "actionLabel": "Test the transfer",
+      "emptyFeedback": "Commit to a transfer answer before checking it.",
+      "verificationMessage": "Testing the idea in unfamiliar territory…"
+    },
+    "completion": {
+      "headline": "You did not memorize a library rule.",
+      "body": {
+        "paragraphs": [
+          "You recognized a condition that remains true, guarded it with state, and carried the idea into a different domain. That is the behaviour this lesson set out to teach."
+        ]
+      },
+      "status": "Repair and transfer both passed deterministic lesson-intent evaluation."
+    }
+  },
+  "evaluation": {
+    "repair": {
+      "requiredFragments": [
+        {
+          "id": "temporal-trigger",
+          "text": "book.due_at <= now"
+        },
+        {
+          "id": "borrowed-state-guard",
+          "text": "requires: book.status = borrowed"
+        },
+        {
+          "id": "overdue-state-change",
+          "text": "ensures: book.status = overdue"
+        },
+        {
+          "id": "notice-event",
+          "text": "ensures: BookOverdue(book: book, borrower: book.borrowed_by)"
+        }
+      ],
+      "failureFeedback": "Keep the temporal trigger, guard the borrowed state, change the book to overdue, and emit BookOverdue. The incident is resolved only when all four are present."
+    },
+    "transfer": {
+      "requiredFragments": [
+        {
+          "id": "temporal-trigger",
+          "text": "grant.expires_at <= now"
+        },
+        {
+          "id": "active-state-guard",
+          "text": "requires: grant.status = active"
+        },
+        {
+          "id": "expired-state-change",
+          "text": "ensures: grant.status = expired"
+        }
+      ],
+      "failureFeedback": "The new domain still needs a temporal condition, a state guard, and an observable state change."
+    }
+  }
+}

@@ -5,6 +5,27 @@ beginners to proficient users and contributors. The curriculum is anchored in
 this repository's own examples first; remote production specs are optional
 comparative reading.
 
+## Product direction
+
+Allium Tutor teaches through an incident, prediction, evidence, concept,
+repair, deterministic verification, consequence, and transfer case. The
+application uses Kotlin Multiplatform and Compose Multiplatform, with mobile as
+the baseline and desktop adding richer workbench capabilities.
+
+Canonical guardrails:
+
+- [PDR 0001: Story-Driven Tutoring](docs/decisions/0001-story-driven-tutoring.md)
+- [ADR 0002: Kotlin Multiplatform Application Platform](docs/decisions/0002-kmp-application-platform.md)
+- [Lesson lifecycle specification](layer/allium/lesson-lifecycle.allium)
+- [Temporal-overdue vertical-slice storyboard](docs/storyboards/temporal-overdue.md)
+
+The KMP application lives in [`app/`](app/). Run its shared tests with
+`cd app && ./gradlew :composeApp:desktopTest`, or launch the desktop slice with
+`cd app && ./gradlew :composeApp:run`.
+
+The Allium specification remains implementation-independent. Platform choices
+belong in ADRs; observable learner behaviour belongs in `layer/allium/`.
+
 ## Training Goals
 
 - **Basics** — install Allium, use the core skills, and write/read small
@@ -64,9 +85,8 @@ for spec in examples/*.allium; do allium analyse "$spec"; done
 
 ## Optional remote examples
 
-Patina and patina-mct remain useful production-scale examples, but the
-curriculum no longer depends on them. Use them as remote case studies after
-learners are comfortable with the internal examples:
+Patina and patina-mct provide optional production-scale case studies for
+learners who are comfortable with the internal examples:
 
 - `patina/layer/allium/mother/*.allium` — lifecycle specs and obligation-plan
   drift checks.
@@ -101,7 +121,7 @@ allium --version           # course material validated against 3.5.0
 allium check examples
 ```
 
-Start the canonical Rustlings-style Alliumlings practice:
+Start the terminal Alliumlings practice:
 
 ```bash
 ./learn-allium
@@ -128,7 +148,7 @@ For setup checks only:
 ./learn-allium doctor
 ```
 
-Legacy/fallback modes:
+Terminal lesson modes:
 
 ```bash
 ./learn-allium lesson-01   # guided single-lesson tutor
