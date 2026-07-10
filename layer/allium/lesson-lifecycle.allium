@@ -1,0 +1,357 @@
+-- allium: 3
+-- lesson-lifecycle.allium
+
+-- Scope: The learner-facing lifecycle of one foundational story-driven lesson.
+-- Includes:
+--   - incident, prediction, evidence, concept, workbench, verification, consequence, and transfer
+--   - deterministic evaluation of repair and transfer submissions
+--   - observable completion only after both repair and transfer pass
+-- Excludes:
+--   - course authoring and publication
+--   - AI coaching and hint generation
+--   - progress synchronisation across devices
+--   - platform layout, widgets, navigation, and implementation technology
+--   - local versus remote execution of the evaluator
+
+------------------------------------------------------------
+-- Contracts
+------------------------------------------------------------
+
+contract DeterministicLessonEvaluation {
+    evaluate_repair: (lesson: Lesson, answer: String) -> Boolean
+    evaluate_transfer: (lesson: Lesson, answer: String) -> Boolean
+
+    @invariant Determinism
+        -- Repeated evaluation of the same lesson and answer produces the same result.
+
+    @invariant LessonIntent
+        -- Evaluation checks the lesson's intended behaviour, not syntax validity alone.
+
+    @guidance
+        -- Language validity and structural analysis may contribute evidence, but neither
+        -- is sufficient on its own to establish that the intended behaviour was specified.
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum LessonStage {
+    incident | prediction | evidence | concept | workbench |
+    verifying_repair | consequence | transfer | verifying_transfer | completed
+}
+
+enum SubmissionKind { repair | transfer }
+enum EvaluationStatus { pending | passed | failed }
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity Learner {
+    learner_id: String
+}
+
+entity Lesson {
+    lesson_id: String
+    title: String
+    incident: String
+    prediction_prompt: String
+    evidence: String
+    concept_name: String
+    concept_explanation: String
+    workbench_prompt: String
+    consequence: String
+    transfer_prompt: String
+}
+
+entity LessonRun {
+    learner: Learner
+    lesson: Lesson
+    stage: LessonStage
+
+    prediction: Prediction with run = this
+    submissions: Submission with run = this
+
+    has_prediction: prediction != null
+    has_passing_repair: submissions.any(s => s.kind = repair and s.status = passed)
+    has_passing_transfer: submissions.any(s => s.kind = transfer and s.status = passed)
+
+    transitions stage {
+        incident -> prediction
+        prediction -> evidence
+        evidence -> concept
+        concept -> workbench
+        workbench -> verifying_repair
+        verifying_repair -> workbench
+        verifying_repair -> consequence
+        consequence -> transfer
+        transfer -> verifying_transfer
+        verifying_transfer -> transfer
+        verifying_transfer -> completed
+        terminal: completed
+    }
+}
+
+entity Prediction {
+    run: LessonRun
+    response: String
+}
+
+entity Submission {
+    run: LessonRun
+    kind: SubmissionKind
+    answer: String
+    status: EvaluationStatus
+
+    transitions status {
+        pending -> passed
+        pending -> failed
+        terminal: passed, failed
+    }
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule StartLessonRun {
+    when: LearnerStartsLesson(learner, lesson)
+    ensures: LessonRun.created(learner: learner, lesson: lesson, stage: incident)
+}
+
+rule ContinueFromIncident {
+    when: LearnerContinuesFromIncident(learner, run)
+    requires: run.learner = learner
+    requires: run.stage = incident
+    ensures: run.stage = prediction
+}
+
+rule RecordPredictionAndRevealEvidence {
+    when: LearnerSubmitsPrediction(learner, run, response)
+    requires: run.learner = learner
+    requires: run.stage = prediction
+    requires: not run.has_prediction
+    ensures: Prediction.created(run: run, response: response)
+    ensures: run.stage = evidence
+}
+
+rule RevealConceptAfterEvidence {
+    when: LearnerContinuesAfterEvidence(learner, run)
+    requires: run.learner = learner
+    requires: run.stage = evidence
+    requires: run.has_prediction
+    ensures: run.stage = concept
+}
+
+rule OpenWorkbenchAfterConcept {
+    when: LearnerOpensWorkbench(learner, run)
+    requires: run.learner = learner
+    requires: run.stage = concept
+    ensures: run.stage = workbench
+}
+
+rule SubmitRepairForVerification {
+    when: LearnerSubmitsRepair(learner, run, answer)
+    requires: run.learner = learner
+    requires: run.stage = workbench
+    ensures: Submission.created(run: run, kind: repair, answer: answer, status: pending)
+    ensures: run.stage = verifying_repair
+}
+
+rule RepairEvaluationPasses {
+    when: submission: Submission.created
+    requires: submission.kind = repair
+    requires: evaluate_repair(submission.run.lesson, submission.answer)
+    ensures: submission.status = passed
+}
+
+rule RepairEvaluationFails {
+    when: submission: Submission.created
+    requires: submission.kind = repair
+    requires: not evaluate_repair(submission.run.lesson, submission.answer)
+    ensures: submission.status = failed
+}
+
+rule PassedRepairRevealsConsequence {
+    when: submission: Submission.status transitions_to passed
+    requires: submission.kind = repair
+    requires: submission.run.stage = verifying_repair
+    ensures: submission.run.stage = consequence
+}
+
+rule FailedRepairReturnsToWorkbench {
+    when: submission: Submission.status transitions_to failed
+    requires: submission.kind = repair
+    requires: submission.run.stage = verifying_repair
+    ensures: submission.run.stage = workbench
+}
+
+rule OpenTransferAfterConsequence {
+    when: LearnerContinuesAfterConsequence(learner, run)
+    requires: run.learner = learner
+    requires: run.stage = consequence
+    requires: run.has_passing_repair
+    ensures: run.stage = transfer
+}
+
+rule SubmitTransferForVerification {
+    when: LearnerSubmitsTransfer(learner, run, answer)
+    requires: run.learner = learner
+    requires: run.stage = transfer
+    ensures: Submission.created(run: run, kind: transfer, answer: answer, status: pending)
+    ensures: run.stage = verifying_transfer
+}
+
+rule TransferEvaluationPasses {
+    when: submission: Submission.created
+    requires: submission.kind = transfer
+    requires: evaluate_transfer(submission.run.lesson, submission.answer)
+    ensures: submission.status = passed
+}
+
+rule TransferEvaluationFails {
+    when: submission: Submission.created
+    requires: submission.kind = transfer
+    requires: not evaluate_transfer(submission.run.lesson, submission.answer)
+    ensures: submission.status = failed
+}
+
+rule PassedTransferCompletesLesson {
+    when: submission: Submission.status transitions_to passed
+    requires: submission.kind = transfer
+    requires: submission.run.stage = verifying_transfer
+    requires: submission.run.has_passing_repair
+    ensures: submission.run.stage = completed
+    ensures: FoundationalLessonCompleted(
+        learner: submission.run.learner,
+        lesson: submission.run.lesson
+    )
+}
+
+rule FailedTransferReturnsToTransfer {
+    when: submission: Submission.status transitions_to failed
+    requires: submission.kind = transfer
+    requires: submission.run.stage = verifying_transfer
+    ensures: submission.run.stage = transfer
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant EvidenceRequiresPrediction {
+    for run in LessonRuns:
+        run.stage in {
+            evidence, concept, workbench, verifying_repair,
+            consequence, transfer, verifying_transfer, completed
+        } implies run.has_prediction
+}
+
+invariant ConsequenceRequiresPassingRepair {
+    for run in LessonRuns:
+        run.stage in {consequence, transfer, verifying_transfer, completed}
+            implies run.has_passing_repair
+}
+
+invariant CompletionRequiresPassingTransfer {
+    for run in LessonRuns:
+        run.stage = completed implies run.has_passing_transfer
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface LessonCatalog {
+    facing learner: Learner
+    context lesson: Lesson
+
+    exposes:
+        lesson.lesson_id
+        lesson.title
+
+    provides:
+        LearnerStartsLesson(learner, lesson)
+}
+
+surface LessonExperience {
+    facing viewer: Learner
+    context run: LessonRun where learner = viewer
+
+    exposes:
+        viewer.learner_id
+        run.lesson.title
+        run.stage
+        run.lesson.incident
+        run.lesson.prediction_prompt when run.stage = prediction
+        run.prediction.response when run.stage in {
+            evidence, concept, workbench, verifying_repair,
+            consequence, transfer, verifying_transfer, completed
+        }
+        run.lesson.evidence when run.stage in {
+            evidence, concept, workbench, verifying_repair,
+            consequence, transfer, verifying_transfer, completed
+        }
+        run.lesson.concept_name when run.stage in {
+            concept, workbench, verifying_repair,
+            consequence, transfer, verifying_transfer, completed
+        }
+        run.lesson.concept_explanation when run.stage in {
+            concept, workbench, verifying_repair,
+            consequence, transfer, verifying_transfer, completed
+        }
+        run.lesson.workbench_prompt when run.stage in {workbench, verifying_repair}
+        run.lesson.consequence when run.stage in {
+            consequence, transfer, verifying_transfer, completed
+        }
+        run.lesson.transfer_prompt when run.stage in {transfer, verifying_transfer}
+
+    provides:
+        LearnerContinuesFromIncident(viewer, run)
+            when run.stage = incident
+        LearnerSubmitsPrediction(viewer, run, response)
+            when run.stage = prediction
+        LearnerContinuesAfterEvidence(viewer, run)
+            when run.stage = evidence
+        LearnerOpensWorkbench(viewer, run)
+            when run.stage = concept
+        LearnerSubmitsRepair(viewer, run, answer)
+            when run.stage = workbench
+        LearnerContinuesAfterConsequence(viewer, run)
+            when run.stage = consequence
+        LearnerSubmitsTransfer(viewer, run, answer)
+            when run.stage = transfer
+
+    contracts:
+        fulfils DeterministicLessonEvaluation
+
+    related:
+        for submission in run.submissions:
+            SubmissionFeedback(submission)
+
+    @guarantee VocabularyFollowsEvidence
+        -- The concept name and explanation are not exposed before the evidence stage
+        -- has been experienced and the run enters the concept stage.
+
+    @guarantee OnePrimaryBeat
+        -- Each stage presents one primary purpose: incident, prediction, evidence,
+        -- concept, workbench, verification, consequence, transfer, or completion.
+
+    @guarantee LearnerRetainsAgency
+        -- Verification never silently replaces the learner's answer. A failed repair
+        -- returns to the workbench; a failed transfer returns to the transfer case.
+
+    @guarantee EvaluationDeterminesProgression
+        -- Only passing lesson-intent evaluation advances a repair to consequence or
+        -- advances a transfer case to completion.
+}
+
+surface SubmissionFeedback {
+    facing viewer: Learner
+    context submission: Submission where run.learner = viewer
+
+    exposes:
+        submission.kind
+        submission.status
+}
