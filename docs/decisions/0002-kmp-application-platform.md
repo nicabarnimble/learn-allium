@@ -39,6 +39,23 @@ wasmJsMain or a separate web client
 └── browser delivery
 ```
 
+### Application module topology
+
+Keep shared product code in a pure KMP library and keep runnable platform applications in separate host modules:
+
+```text
+app/
+├── shared/       # KMP lesson kernel, shared presentation, resources, and platform source sets
+├── desktopApp/   # JVM entry point, desktop adapters, and distribution configuration
+├── iosApp/       # Swift/Xcode host for the shared Kotlin framework
+├── androidApp/   # Android host when that platform is introduced
+└── webApp/       # Compose web host when that renderer is selected
+```
+
+The current application should adopt the `shared` and `desktopApp` boundary before adding a web target. Host modules own application entry points, packaging, signing, and adapters that can be injected at the host boundary. The shared library owns behaviour, reusable presentation, and any narrow platform implementation that must remain in a KMP source set. The iOS framework remains the umbrella KMP artifact consumed by `iosApp`.
+
+Do not pre-emptively split the shared library into logic, UI, feature, or layer modules. Introduce a Compose-free shared-logic boundary when a real native or non-Compose renderer needs it, rather than in anticipation of one. A separate TypeScript/PWA client consumes the stable lesson contract and does not require Kotlin module symmetry.
+
 ### Mobile first, desktop extended
 
 The shared product defines capability tiers rather than forcing identical interfaces:
@@ -61,6 +78,7 @@ Compose Wasm maturity alone must not determine whether KMP succeeds for the prod
 
 - Keep lesson progression deterministic and independent of UI lifecycle.
 - Prefer explicit application graphs and dependency ownership over global `object` service locators.
+- Let host modules construct and inject platform adapters where practical.
 - Put platform capabilities behind narrow interfaces.
 - Do not claim code sharing by line count; evaluate whether behaviour and maintenance are genuinely shared.
 - Platform-specific presentation is allowed when required for input, accessibility, lifecycle, or platform quality.
