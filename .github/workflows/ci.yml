@@ -50,11 +50,11 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       - name: Test shared code and compile desktop host
         run: ./gradlew :shared:desktopTest :desktopApp:compileKotlin
 
@@ -67,11 +67,11 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       - name: Link simulator and device frameworks
         run: |
           ./gradlew \
