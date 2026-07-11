@@ -1,0 +1,111 @@
+-- allium: 3
+-- access-grant-lifecycle.allium (training starter — INCOMPLETE, see TODOs)
+
+-- Scope: Lifecycle of a single access grant, from request to terminal state,
+--        and the authorization decision it backs.
+-- Includes:
+--   - approve/deny/expire/revoke transitions
+--   - resource-use authorization against the grant state
+-- Excludes:
+--   - which resources exist and how they are implemented
+--   - organization/team scoping of grants
+--   - storage and audit-log mechanics
+
+entity Operator {
+    name: String
+}
+
+entity Requester {
+    requester_id: String
+}
+
+entity AccessGrant {
+    grant_state: requested | active | denied | expired | revoked
+    resource_name: String
+    requested_by: String
+    decided_by_operator: String?
+    expires_at: Timestamp?
+
+    is_active: grant_state = active
+}
+
+config {
+    grant_ttl: Duration = 24.hours
+}
+
+given {
+    grant: AccessGrant
+    requester: Requester
+}
+
+rule GrantApproved {
+    when: OperatorApprovesGrant(operator)
+    requires: grant.grant_state = requested
+    ensures: grant.grant_state = active
+    ensures: grant.decided_by_operator = operator.name
+    ensures: grant.expires_at = now + config.grant_ttl
+    ensures: AccessGrantActivated(grant: grant, operator: operator)
+}
+
+rule GrantDenied {
+    when: OperatorDeniesGrant(operator)
+    requires: grant.grant_state = requested
+    ensures: grant.grant_state = denied
+    ensures: grant.decided_by_operator = operator.name
+    ensures: AccessGrantDenied(grant: grant, operator: operator)
+}
+
+-- TODO(1): The grant sets expires_at when approved, but nothing ever expires.
+--          Write rule GrantExpires using a temporal trigger:
+--            when: _: AccessGrant.expires_at <= now
+--          Run `allium check` first and read any diagnostics before you fix it.
+
+-- TODO(2): Operators must be able to revoke an active grant.
+--          Write rule GrantRevoked (attribute the decision, emit an event).
+
+rule ResourceUseAuthorized {
+    when: RequesterUsesResource(requester)
+    requires: grant.is_active
+    ensures: ResourceUseAllowed(grant: grant, requester: requester)
+}
+
+-- TODO(3): What happens when a requester uses the resource WITHOUT an active grant?
+--          Right now: nothing — which means deny-by-default is not specified.
+--          Write rule ResourceUseDenied for `not grant.is_active`, emitting a
+--          refusal event with a reason.
+
+surface AccessGrantControl {
+    facing operator: Operator
+    context grant: AccessGrant
+
+    exposes:
+        operator.name
+        grant.grant_state
+        grant.resource_name
+        grant.requested_by
+        grant.decided_by_operator
+        grant.expires_at
+
+    provides:
+        OperatorApprovesGrant(operator)
+            when grant.grant_state = requested
+        OperatorDeniesGrant(operator)
+            when grant.grant_state = requested
+        -- TODO(2b): provide the revoke trigger here, guarded to active grants.
+}
+
+surface ResourceUse {
+    facing requester: Requester
+    context grant: AccessGrant
+
+    exposes:
+        requester.requester_id
+        grant.is_active
+
+    provides:
+        RequesterUsesResource(requester)
+}
+
+-- TODO(4): Write contract AccessGrantAuthority with named invariants for:
+--          deny-by-default, expired-grants-do-not-authorize,
+--          terminal-states-stay-terminal, decisions-are-attributed.

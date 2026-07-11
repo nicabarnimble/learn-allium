@@ -1,0 +1,771 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PI_MODEL="${ALLIUM_TUTOR_PI_MODEL:-}"
+PI_THINKING="${ALLIUM_TUTOR_PI_THINKING:-low}"
+
+usage() {
+  cat <<'USAGE'
+Alliumlings — resilient Allium training
+
+Start here:
+  ./learn-allium
+
+Equivalent direct commands:
+  scripts/allium-tutor watch [--strict]        # canonical single-terminal training
+  scripts/allium-tutor watch --auto-watch      # rerun checks when current exercise is saved
+  scripts/allium-tutor start [--strict]        # alias for watch
+  scripts/allium-tutor tmux [--strict]         # optional two-pane Pi helper mode
+  scripts/allium-tutor lesson-01 [--strict]    # legacy guided Lesson 01 tutor
+  scripts/allium-tutor pi [--strict]           # fallback: tutor embedded inside Pi
+  scripts/allium-tutor doctor
+
+Commands:
+  watch        Launch Alliumlings in the current terminal.
+  start        Alias for watch.
+  tmux         Optional two-pane mode: Alliumlings left, Pi helper right.
+  lesson-01    Legacy guided Lesson 01 tutor; with --smoke, verify its fixture.
+  pi           Legacy embedded-in-Pi tutor mode.
+  doctor       Check required Allium tooling and optional Pi/tmux support.
+
+Options:
+  --smoke           Prepare a run and verify lesson fixtures without launching Pi.
+  --auto-watch      Rerun checks when the current exercise file changes.
+  --model MODEL     Pi model ID or pattern, optionally provider/model.
+  --thinking LEVEL  Pi thinking: off, minimal, low, medium, high, or xhigh (default: low).
+  --strict          Use a per-run PI_CODING_AGENT_DIR. This isolates Pi auth/settings too.
+                    You may need to provide API keys or login again.
+
+Environment:
+  ALLIUM_SKILL_PATH          Optional path to the Allium SKILL.md to copy into the run.
+  ALLIUM_TUTOR_PI_MODEL      Default value for --model.
+  ALLIUM_TUTOR_PI_THINKING   Default value for --thinking (default: low).
+USAGE
+}
+
+welcome() {
+  local mode="${1:-tmux}"
+  echo "== Welcome to Allium Tutor =="
+  echo
+  echo "This will:"
+  echo "  1. check your local tools,"
+  echo "  2. create a disposable lesson workspace under .tutorial/runs/,"
+  if [[ "$mode" == "pi" ]]; then
+    echo "  3. open Pi with the tutor embedded as a fallback mode."
+  elif [[ "$mode" == "tmux" ]]; then
+    echo "  3. open Alliumlings in tmux: exercises on the left, Pi help on the right."
+  else
+    echo "  3. open Alliumlings in this terminal."
+  fi
+  echo
+  echo 'Tip: if something fails, run `./learn-allium doctor` for the setup check only.'
+  echo
+}
+
+repo_root() {
+  git rev-parse --show-toplevel 2>/dev/null || pwd
+}
+
+require_cmd() {
+  local name="$1"
+  if ! command -v "$name" >/dev/null 2>&1; then
+    echo "error: required command not found: $name" >&2
+    return 1
+  fi
+}
+
+find_allium_skill() {
+  if [[ -n "${ALLIUM_SKILL_PATH:-}" ]]; then
+    if [[ -f "$ALLIUM_SKILL_PATH" ]]; then
+      printf '%s\n' "$ALLIUM_SKILL_PATH"
+      return 0
+    fi
+    echo "error: ALLIUM_SKILL_PATH does not point to a file: $ALLIUM_SKILL_PATH" >&2
+    return 1
+  fi
+
+  local candidates=(
+    "$HOME/.pi/agent/skills/allium/SKILL.md"
+    "$HOME/.agents/skills/allium/SKILL.md"
+    "$(repo_root)/.pi/skills/allium/SKILL.md"
+    "$(repo_root)/.agents/skills/allium/SKILL.md"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  cat >&2 <<'MSG'
+error: could not find the Allium skill.
+
+Install it for Pi, or point ALLIUM_SKILL_PATH at its SKILL.md:
+
+  npx skills add juxt/allium
+  ALLIUM_SKILL_PATH=$HOME/.pi/agent/skills/allium/SKILL.md ./learn-allium
+MSG
+  return 1
+}
+
+preflight() {
+  local profile="${1:-core}"
+  echo "== Allium Tutor preflight =="
+  require_cmd allium
+
+  echo "allium: $(allium --version)"
+
+  if command -v pi >/dev/null 2>&1; then
+    echo "pi:     $(pi --version 2>/dev/null || echo installed)"
+    echo "pi help: model=${PI_MODEL:-user-default} thinking=$PI_THINKING"
+  elif [[ "$profile" == "pi" || "$profile" == "tmux" ]]; then
+    echo "error: required command not found: pi" >&2
+    return 1
+  else
+    echo "pi:     not found (optional; Ask Pi will show a copyable fallback prompt)"
+  fi
+
+  local skill=""
+  if skill="$(find_allium_skill 2>/dev/null)"; then
+    echo "skill:  $skill"
+  elif [[ "$profile" == "pi" || "$profile" == "tmux" ]]; then
+    find_allium_skill >/dev/null
+    return 1
+  else
+    echo "skill:  not found (optional unless launching Pi)"
+  fi
+
+  if command -v tmux >/dev/null 2>&1; then
+    echo "tmux:   $(tmux -V 2>/dev/null || echo installed)"
+  elif [[ "$profile" == "tmux" ]]; then
+    echo "error: required command not found: tmux" >&2
+    return 1
+  else
+    echo "tmux:   not found (optional; default mode does not need it)"
+  fi
+
+  if [[ -t 1 ]]; then
+    echo "terminal: ${TERM:-unknown} (interactive stdout detected)"
+  else
+    echo "terminal: non-interactive stdout"
+  fi
+
+  echo "checking local examples..."
+  allium check "$(repo_root)/examples" >/dev/null
+  echo "ok"
+}
+
+normalize_lesson() {
+  case "${1:-}" in
+    lesson-01|01|01-first-rule|first-rule)
+      printf '%s\n' "01-first-rule"
+      ;;
+    *)
+      echo "error: unknown lesson: ${1:-}" >&2
+      usage >&2
+      return 1
+      ;;
+  esac
+}
+
+prepare_run() {
+  local lesson_id="$1"
+  local root
+  root="$(repo_root)"
+
+  local fixture="$root/tutorial/fixtures/$lesson_id/library-starter.allium"
+  local solution="$root/tutorial/solutions/$lesson_id/library-solution.allium"
+  local lesson_md="$root/tutorial/lessons/$lesson_id.md"
+
+  [[ -f "$fixture" ]] || { echo "error: missing fixture: $fixture" >&2; return 1; }
+  [[ -f "$solution" ]] || { echo "error: missing solution: $solution" >&2; return 1; }
+  [[ -f "$lesson_md" ]] || { echo "error: missing lesson: $lesson_md" >&2; return 1; }
+
+  local skill skill_dir
+  skill="$(find_allium_skill)"
+  skill_dir="$(cd "$(dirname "$skill")" && pwd)"
+
+  local timestamp run_dir workspace
+  timestamp="$(date +%Y%m%d-%H%M%S)-$$"
+  run_dir="$root/.tutorial/runs/lesson-01-$timestamp"
+  workspace="$run_dir/workspace"
+
+  mkdir -p "$workspace" "$run_dir/skills/allium" "$run_dir/sessions" "$run_dir/home" "$run_dir/tmp"
+
+  cp "$fixture" "$workspace/library-starter.allium"
+  cp "$lesson_md" "$workspace/README.md"
+  cp "$solution" "$run_dir/library-solution.allium"
+  cp -R "$skill_dir"/. "$run_dir/skills/allium"/
+
+  cat > "$workspace/.lesson-run" <<EOF
+lesson_id=$lesson_id
+run_dir=$run_dir
+workspace=$workspace
+starter=$workspace/library-starter.allium
+solution=$run_dir/library-solution.allium
+EOF
+
+  printf '%s\n' "$run_dir"
+}
+
+smoke_run() {
+  local run_dir="$1"
+  local workspace="$run_dir/workspace"
+  local solution="$run_dir/library-solution.allium"
+  local starter="$workspace/library-starter.allium"
+
+  echo "== Smoke test: $run_dir =="
+  echo "checking solution..."
+  allium check "$solution" >/dev/null
+  allium analyse "$solution" >/dev/null
+
+  echo "checking starter has the expected teaching diagnostic..."
+  set +e
+  local starter_output
+  starter_output="$(allium check "$starter" 2>&1)"
+  local starter_status=$?
+  set -e
+
+  if [[ "$starter_status" -eq 0 ]]; then
+    echo "error: starter unexpectedly passed; lesson should begin with one missing rule" >&2
+    return 1
+  fi
+
+  if ! grep -q "allium.status.unreachableValue" <<<"$starter_output"; then
+    echo "error: starter failed, but not with the expected unreachable status diagnostic" >&2
+    echo "$starter_output" >&2
+    return 1
+  fi
+
+  echo "ok"
+  echo "run directory: $run_dir"
+}
+
+launch_lesson_01() {
+  local smoke=false
+  local strict=false
+  local show_welcome=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --smoke) smoke=true ;;
+      --strict) strict=true ;;
+      --welcome) show_welcome=true ;;
+      --model)
+        [[ $# -ge 2 && -n "$2" ]] || { echo "error: --model requires a value" >&2; return 1; }
+        PI_MODEL="$2"; shift ;;
+      --thinking)
+        [[ $# -ge 2 ]] || { echo "error: --thinking requires a value" >&2; return 1; }
+        case "$2" in off|minimal|low|medium|high|xhigh) PI_THINKING="$2" ;; *) echo "error: invalid thinking level: $2" >&2; return 1 ;; esac
+        shift ;;
+      -h|--help) usage; return 0 ;;
+      *) echo "error: unknown option for lesson-01: $1" >&2; usage >&2; return 1 ;;
+    esac
+    shift
+  done
+
+  if [[ "$show_welcome" == true ]]; then
+    welcome pi
+  fi
+
+  preflight pi
+
+  local lesson_id run_dir workspace root
+  lesson_id="01-first-rule"
+  root="$(repo_root)"
+  run_dir="$(prepare_run "$lesson_id")"
+  workspace="$run_dir/workspace"
+
+  if [[ "$smoke" == true ]]; then
+    smoke_run "$run_dir"
+    return 0
+  fi
+
+  echo "== Launching Allium Tutor =="
+  echo "run:       $run_dir"
+  echo "workspace: $workspace"
+  echo
+
+  local -a env_args=(
+    "PI_SKIP_VERSION_CHECK=1"
+    "PI_TELEMETRY=0"
+    "ALLIUM_TUTOR_REPO_ROOT=$root"
+    "ALLIUM_TUTOR_LESSON_ID=$lesson_id"
+    "ALLIUM_TUTOR_RUN_DIR=$run_dir"
+    "ALLIUM_TUTOR_WORKSPACE=$workspace"
+    "ALLIUM_TUTOR_STARTER=$workspace/library-starter.allium"
+    "ALLIUM_TUTOR_SOLUTION=$run_dir/library-solution.allium"
+    "ALLIUM_TUTOR_FIXTURE=$root/tutorial/fixtures/$lesson_id/library-starter.allium"
+    "ALLIUM_TUTOR_LESSON_MD=$root/tutorial/lessons/$lesson_id.md"
+    "ALLIUM_TUTOR_HOME=$run_dir/home"
+    "ALLIUM_TUTOR_TMP=$run_dir/tmp"
+  )
+
+  if [[ "$strict" == true ]]; then
+    mkdir -p "$run_dir/pi-agent"
+    env_args+=("PI_CODING_AGENT_DIR=$run_dir/pi-agent")
+  fi
+
+  local -a pi_selection_args=(--thinking "$PI_THINKING")
+  if [[ -n "$PI_MODEL" ]]; then
+    pi_selection_args+=(--model "$PI_MODEL")
+  fi
+
+  (
+    cd "$workspace"
+    env "${env_args[@]}" \
+      pi "${pi_selection_args[@]}" \
+        --session-dir "$run_dir/sessions" \
+        --no-context-files \
+        --no-prompt-templates \
+        --no-skills \
+        --skill "$run_dir/skills/allium/SKILL.md" \
+        --no-extensions \
+        -e "$root/tutorial/pi/isolation-guard.ts" \
+        -e "$root/tutorial/pi/allium-tutor.ts" \
+        --no-approve \
+        --tools read,edit,write,bash \
+        --name "Allium Tutor: Lesson 01" \
+        "/allium-tutor lesson-01"
+  )
+}
+
+prepare_alliumlings_run() {
+  local require_skill="${1:-false}"
+  local root timestamp run_dir workspace skill skill_dir
+  root="$(repo_root)"
+
+  [[ -d "$root/tutorial/alliumlings/starters" ]] || { echo "error: missing tutorial/alliumlings/starters" >&2; return 1; }
+  [[ -d "$root/tutorial/alliumlings/solutions" ]] || { echo "error: missing tutorial/alliumlings/solutions" >&2; return 1; }
+  [[ -d "$root/tutorial/alliumlings/hints" ]] || { echo "error: missing tutorial/alliumlings/hints" >&2; return 1; }
+
+  skill=""
+  skill_dir=""
+  if [[ "$require_skill" == true ]]; then
+    skill="$(find_allium_skill)"
+    skill_dir="$(cd "$(dirname "$skill")" && pwd)"
+  elif skill="$(find_allium_skill 2>/dev/null)"; then
+    skill_dir="$(cd "$(dirname "$skill")" && pwd)"
+  fi
+
+  timestamp="$(date +%Y%m%d-%H%M%S)-$$"
+  run_dir="$root/.tutorial/runs/alliumlings-$timestamp"
+  workspace="$run_dir/workspace"
+
+  mkdir -p \
+    "$workspace/exercises" \
+    "$workspace/.alliumlings/starters" \
+    "$workspace/.alliumlings/solutions" \
+    "$workspace/.alliumlings/hints" \
+    "$run_dir/skills/allium" \
+    "$run_dir/sessions" \
+    "$run_dir/home" \
+    "$run_dir/tmp"
+
+  cp "$root"/tutorial/alliumlings/starters/*.allium "$workspace/exercises"/
+  cp "$root"/tutorial/alliumlings/starters/*.allium "$workspace/.alliumlings/starters"/
+  cp "$root"/tutorial/alliumlings/solutions/*.allium "$workspace/.alliumlings/solutions"/
+  cp "$root"/tutorial/alliumlings/hints/*.md "$workspace/.alliumlings/hints"/
+  cp "$root/tutorial/alliumlings/exercises.toml" "$workspace/.alliumlings/exercises.toml"
+  if [[ -n "$skill_dir" ]]; then
+    cp -R "$skill_dir"/. "$run_dir/skills/allium"/
+  fi
+  echo 0 > "$workspace/.alliumlings/state"
+  : > "$workspace/.alliumlings/done"
+
+  cat > "$workspace/.lesson-run" <<EOF
+mode=alliumlings
+run_dir=$run_dir
+workspace=$workspace
+exercises=$workspace/exercises
+EOF
+
+  printf '%s\n' "$run_dir"
+}
+
+smoke_alliumlings_run() {
+  local run_dir="$1"
+  local workspace="$run_dir/workspace"
+  local ok=true
+
+  echo "== Alliumlings smoke test: $run_dir =="
+  echo "checking solutions..."
+  for spec in "$workspace/.alliumlings/solutions"/*.allium; do
+    allium check "$spec" >/dev/null
+    allium analyse "$spec" >/dev/null
+  done
+
+  echo "checking starters begin unsolved..."
+  for spec in "$workspace/exercises"/*.allium; do
+    local check_output analyse_output
+    check_output="$(allium check "$spec" 2>&1 || true)"
+    analyse_output="$(allium analyse "$spec" 2>&1 || true)"
+    if grep -q '"diagnostics": \[\]' <<<"$check_output" && grep -q '"findings": \[\]' <<<"$check_output" && grep -q '"diagnostics": \[\]' <<<"$analyse_output" && grep -q '"findings": \[\]' <<<"$analyse_output"; then
+      echo "error: starter unexpectedly clean: $spec" >&2
+      ok=false
+    fi
+  done
+
+  [[ "$ok" == true ]] || return 1
+  echo "ok"
+  echo "run directory: $run_dir"
+}
+
+launch_alliumlings() {
+  local smoke=false
+  local strict=false
+  local show_welcome=false
+  local panes=false
+  local runner_mode="watch"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --smoke) smoke=true ;;
+      --strict) strict=true ;;
+      --welcome) show_welcome=true ;;
+      --auto-watch|--watch-file|--watch-save) runner_mode="auto-watch" ;;
+      --tmux|--panes) panes=true ;;
+      --no-tmux|--single) panes=false ;;
+      --model)
+        [[ $# -ge 2 && -n "$2" ]] || { echo "error: --model requires a value" >&2; return 1; }
+        PI_MODEL="$2"; shift ;;
+      --thinking)
+        [[ $# -ge 2 ]] || { echo "error: --thinking requires a value" >&2; return 1; }
+        case "$2" in off|minimal|low|medium|high|xhigh) PI_THINKING="$2" ;; *) echo "error: invalid thinking level: $2" >&2; return 1 ;; esac
+        shift ;;
+      -h|--help) usage; return 0 ;;
+      *) echo "error: unknown option for alliumlings: $1" >&2; usage >&2; return 1 ;;
+    esac
+    shift
+  done
+
+  if [[ "$show_welcome" == true ]]; then
+    echo "== Welcome to Alliumlings =="
+    echo
+    if [[ "$panes" == true ]]; then
+      echo "This opens tiny failing Allium exercises on the left and Pi help on the right."
+    else
+      echo "This opens tiny failing Allium exercises in this terminal."
+      echo "Pi help is optional: 'Ask Pi' answers inline when available, with a copyable fallback."
+    fi
+    echo
+  fi
+
+  if [[ "$panes" == true ]]; then
+    preflight tmux
+  else
+    preflight core
+  fi
+
+  local root run_dir workspace
+  root="$(repo_root)"
+  run_dir="$(prepare_alliumlings_run "$panes")"
+  workspace="$run_dir/workspace"
+
+  if [[ "$smoke" == true ]]; then
+    smoke_alliumlings_run "$run_dir"
+    return 0
+  fi
+
+  if [[ "$panes" != true ]]; then
+    if [[ "$strict" == true ]]; then
+      echo "note: --strict only affects Pi helper modes; default Alliumlings does not launch Pi."
+      echo
+    fi
+    echo "== Launching Alliumlings =="
+    echo "run:       $run_dir"
+    echo "workspace: $workspace"
+    echo
+    (
+      cd "$workspace"
+      export ALLIUM_TUTOR_REPO_ROOT="$root"
+      export ALLIUM_TUTOR_RUN_DIR="$run_dir"
+      export ALLIUM_TUTOR_WORKSPACE="$workspace"
+      export ALLIUM_TUTOR_HOME="$run_dir/home"
+      export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+      export ALLIUM_TUTOR_PI_MODEL="$PI_MODEL"
+      export ALLIUM_TUTOR_PI_THINKING="$PI_THINKING"
+      exec "$root/tutorial/bin/alliumlings.sh" "$runner_mode"
+    )
+    return 0
+  fi
+
+  local session session_name pi_script tutor_script pi_model_q pi_thinking_q
+  printf -v pi_model_q '%q' "$PI_MODEL"
+  printf -v pi_thinking_q '%q' "$PI_THINKING"
+  session_name="alliumlings-$(basename "$run_dir" | tr -cd '[:alnum:]-')"
+  session="$session_name"
+  pi_script="$run_dir/start-pi-pane.sh"
+  tutor_script="$run_dir/start-alliumlings-pane.sh"
+
+  cat > "$pi_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$workspace"
+export PI_SKIP_VERSION_CHECK=1
+export PI_TELEMETRY=0
+export ALLIUM_TUTOR_REPO_ROOT="$root"
+export ALLIUM_TUTOR_RUN_DIR="$run_dir"
+export ALLIUM_TUTOR_WORKSPACE="$workspace"
+export ALLIUM_TUTOR_HOME="$run_dir/home"
+export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+export ALLIUM_TUTOR_PI_MODEL=$pi_model_q
+export ALLIUM_TUTOR_PI_THINKING=$pi_thinking_q
+EOF
+
+  if [[ "$strict" == true ]]; then
+    mkdir -p "$run_dir/pi-agent"
+    echo "export PI_CODING_AGENT_DIR=\"$run_dir/pi-agent\"" >> "$pi_script"
+  fi
+
+  cat >> "$pi_script" <<EOF
+pi_selection_args=(--thinking "\$ALLIUM_TUTOR_PI_THINKING")
+if [[ -n "\$ALLIUM_TUTOR_PI_MODEL" ]]; then
+  pi_selection_args+=(--model "\$ALLIUM_TUTOR_PI_MODEL")
+fi
+exec pi "\${pi_selection_args[@]}" \\
+  --session-dir "$run_dir/sessions" \\
+  --no-context-files \\
+  --no-prompt-templates \\
+  --no-skills \\
+  --skill "$run_dir/skills/allium/SKILL.md" \\
+  --no-extensions \\
+  -e "$root/tutorial/pi/isolation-guard.ts" \\
+  --no-approve \\
+  --tools read,edit,write,bash \\
+  --name "Alliumlings: Pi Helper" \\
+  --append-system-prompt "You are the Pi helper pane for Alliumlings. Teach slowly. Do not edit unless explicitly asked. Keep answers focused on the current exercise file under exercises/."
+EOF
+
+  cat > "$tutor_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$workspace"
+export ALLIUM_TUTOR_REPO_ROOT="$root"
+export ALLIUM_TUTOR_RUN_DIR="$run_dir"
+export ALLIUM_TUTOR_WORKSPACE="$workspace"
+export ALLIUM_TUTOR_HOME="$run_dir/home"
+export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+export ALLIUM_TUTOR_PI_MODEL=$pi_model_q
+export ALLIUM_TUTOR_PI_THINKING=$pi_thinking_q
+export ALLIUM_TUTOR_PI_PANE="\${ALLIUM_TUTOR_PI_PANE:?}"
+export ALLIUM_TUTOR_TMUX_SESSION="$session"
+exec "$root/tutorial/bin/alliumlings.sh" "$runner_mode"
+EOF
+
+  chmod +x "$pi_script" "$tutor_script"
+
+  echo "== Launching Alliumlings in tmux =="
+  echo "tmux session: $session"
+  echo "run:          $run_dir"
+  echo "workspace:    $workspace"
+  echo
+
+  tmux new-session -d -s "$session" -n alliumlings -c "$workspace"
+  tmux set-option -t "$session" status-style 'bg=colour236,fg=colour250' >/dev/null
+  tmux set-option -t "$session" status-left '#[fg=colour51,bold] Alliumlings #[default]' >/dev/null
+  tmux set-option -t "$session" status-right '#[fg=colour244]q closes session #[default]' >/dev/null
+  tmux set-option -t "$session" pane-border-style 'fg=colour238' >/dev/null
+  tmux set-option -t "$session" pane-active-border-style 'fg=colour51' >/dev/null
+  local tutor_pane pi_pane
+  tutor_pane="$(tmux display-message -p -t "$session:alliumlings.0" '#{pane_id}')"
+  pi_pane="$(tmux split-window -h -P -F '#{pane_id}' -t "$tutor_pane" -c "$workspace")"
+
+  tmux send-keys -t "$pi_pane" "bash '$pi_script'" C-m
+  tmux send-keys -t "$tutor_pane" "ALLIUM_TUTOR_PI_PANE='$pi_pane' bash '$tutor_script'" C-m
+  tmux select-pane -t "$tutor_pane"
+  tmux attach-session -t "$session"
+}
+
+launch_tmux_lesson_01() {
+  local smoke=false
+  local strict=false
+  local show_welcome=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --smoke) smoke=true ;;
+      --strict) strict=true ;;
+      --welcome) show_welcome=true ;;
+      --model)
+        [[ $# -ge 2 && -n "$2" ]] || { echo "error: --model requires a value" >&2; return 1; }
+        PI_MODEL="$2"; shift ;;
+      --thinking)
+        [[ $# -ge 2 ]] || { echo "error: --thinking requires a value" >&2; return 1; }
+        case "$2" in off|minimal|low|medium|high|xhigh) PI_THINKING="$2" ;; *) echo "error: invalid thinking level: $2" >&2; return 1 ;; esac
+        shift ;;
+      -h|--help) usage; return 0 ;;
+      *) echo "error: unknown option for tmux lesson-01: $1" >&2; usage >&2; return 1 ;;
+    esac
+    shift
+  done
+
+  if [[ "$show_welcome" == true ]]; then
+    welcome tmux
+  fi
+
+  preflight tmux
+
+  local lesson_id run_dir workspace root
+  lesson_id="01-first-rule"
+  root="$(repo_root)"
+  run_dir="$(prepare_run "$lesson_id")"
+  workspace="$run_dir/workspace"
+
+  if [[ "$smoke" == true ]]; then
+    smoke_run "$run_dir"
+    return 0
+  fi
+
+  if ! command -v tmux >/dev/null 2>&1; then
+    cat >&2 <<'MSG'
+error: tmux is required for the default two-pane tutor.
+
+Install tmux, or use the fallback embedded Pi mode:
+
+  ./learn-allium pi
+MSG
+    return 1
+  fi
+
+  local session session_name
+  session_name="allium-tutor-$(basename "$run_dir" | tr -cd '[:alnum:]-')"
+  session="$session_name"
+
+  local pi_script tutor_script pi_model_q pi_thinking_q
+  printf -v pi_model_q '%q' "$PI_MODEL"
+  printf -v pi_thinking_q '%q' "$PI_THINKING"
+  pi_script="$run_dir/start-pi-pane.sh"
+  tutor_script="$run_dir/start-tutor-pane.sh"
+
+  cat > "$pi_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$workspace"
+export PI_SKIP_VERSION_CHECK=1
+export PI_TELEMETRY=0
+export ALLIUM_TUTOR_REPO_ROOT="$root"
+export ALLIUM_TUTOR_LESSON_ID="$lesson_id"
+export ALLIUM_TUTOR_RUN_DIR="$run_dir"
+export ALLIUM_TUTOR_WORKSPACE="$workspace"
+export ALLIUM_TUTOR_STARTER="$workspace/library-starter.allium"
+export ALLIUM_TUTOR_SOLUTION="$run_dir/library-solution.allium"
+export ALLIUM_TUTOR_FIXTURE="$root/tutorial/fixtures/$lesson_id/library-starter.allium"
+export ALLIUM_TUTOR_LESSON_MD="$root/tutorial/lessons/$lesson_id.md"
+export ALLIUM_TUTOR_HOME="$run_dir/home"
+export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+export ALLIUM_TUTOR_PI_MODEL=$pi_model_q
+export ALLIUM_TUTOR_PI_THINKING=$pi_thinking_q
+EOF
+
+  if [[ "$strict" == true ]]; then
+    mkdir -p "$run_dir/pi-agent"
+    cat >> "$pi_script" <<EOF
+export PI_CODING_AGENT_DIR="$run_dir/pi-agent"
+EOF
+  fi
+
+  cat >> "$pi_script" <<EOF
+pi_selection_args=(--thinking "\$ALLIUM_TUTOR_PI_THINKING")
+if [[ -n "\$ALLIUM_TUTOR_PI_MODEL" ]]; then
+  pi_selection_args+=(--model "\$ALLIUM_TUTOR_PI_MODEL")
+fi
+exec pi "\${pi_selection_args[@]}" \\
+  --session-dir "$run_dir/sessions" \\
+  --no-context-files \\
+  --no-prompt-templates \\
+  --no-skills \\
+  --skill "$run_dir/skills/allium/SKILL.md" \\
+  --no-extensions \\
+  -e "$root/tutorial/pi/isolation-guard.ts" \\
+  --no-approve \\
+  --tools read,edit,write,bash \\
+  --name "Allium Tutor: Pi Helper" \\
+  --append-system-prompt "You are the Pi helper pane for Allium Tutor. Teach slowly. Do not edit unless explicitly asked by the tutor prompt. Keep answers beginner-friendly and focused on library-starter.allium."
+EOF
+
+  cat > "$tutor_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$workspace"
+export ALLIUM_TUTOR_REPO_ROOT="$root"
+export ALLIUM_TUTOR_LESSON_ID="$lesson_id"
+export ALLIUM_TUTOR_RUN_DIR="$run_dir"
+export ALLIUM_TUTOR_WORKSPACE="$workspace"
+export ALLIUM_TUTOR_STARTER="$workspace/library-starter.allium"
+export ALLIUM_TUTOR_SOLUTION="$run_dir/library-solution.allium"
+export ALLIUM_TUTOR_FIXTURE="$root/tutorial/fixtures/$lesson_id/library-starter.allium"
+export ALLIUM_TUTOR_LESSON_MD="$root/tutorial/lessons/$lesson_id.md"
+export ALLIUM_TUTOR_HOME="$run_dir/home"
+export ALLIUM_TUTOR_TMP="$run_dir/tmp"
+export ALLIUM_TUTOR_PI_MODEL=$pi_model_q
+export ALLIUM_TUTOR_PI_THINKING=$pi_thinking_q
+export ALLIUM_TUTOR_PI_PANE="\${ALLIUM_TUTOR_PI_PANE:?}"
+export ALLIUM_TUTOR_TMUX_SESSION="$session"
+exec "$root/tutorial/bin/tutor.sh"
+EOF
+
+  chmod +x "$pi_script" "$tutor_script"
+
+  echo "== Launching Allium Tutor in tmux =="
+  echo "tmux session: $session"
+  echo "run:          $run_dir"
+  echo "workspace:    $workspace"
+  echo
+
+  tmux new-session -d -s "$session" -n lesson -c "$workspace"
+  tmux set-option -t "$session" status-style 'bg=colour236,fg=colour250' >/dev/null
+  tmux set-option -t "$session" status-left '#[fg=colour51,bold] Allium Tutor #[default]' >/dev/null
+  tmux set-option -t "$session" status-right '#[fg=colour244]q in tutor closes session #[default]' >/dev/null
+  tmux set-option -t "$session" pane-border-style 'fg=colour238' >/dev/null
+  tmux set-option -t "$session" pane-active-border-style 'fg=colour51' >/dev/null
+  local tutor_pane pi_pane
+  tutor_pane="$(tmux display-message -p -t "$session:lesson.0" '#{pane_id}')"
+  pi_pane="$(tmux split-window -h -P -F '#{pane_id}' -t "$tutor_pane" -c "$workspace")"
+
+  tmux send-keys -t "$pi_pane" "bash '$pi_script'" C-m
+  tmux send-keys -t "$tutor_pane" "ALLIUM_TUTOR_PI_PANE='$pi_pane' bash '$tutor_script'" C-m
+  tmux select-pane -t "$tutor_pane"
+  tmux attach-session -t "$session"
+}
+
+main() {
+  if [[ $# -eq 0 ]]; then
+    launch_alliumlings --welcome
+    return $?
+  fi
+
+  case "$1" in
+    watch|alliumlings|lings|start|go|run)
+      shift
+      launch_alliumlings --welcome "$@"
+      ;;
+    tmux|panes)
+      shift
+      launch_alliumlings --welcome --tmux "$@"
+      ;;
+    pi|embedded|embedded-pi)
+      shift
+      launch_lesson_01 --welcome "$@"
+      ;;
+    doctor|check|preflight|--preflight)
+      shift
+      [[ $# -eq 0 ]] || { echo "error: doctor/preflight takes no arguments" >&2; return 1; }
+      preflight core
+      ;;
+    lesson-01|01|01-first-rule|first-rule)
+      shift
+      launch_tmux_lesson_01 "$@"
+      ;;
+    -h|--help|help)
+      usage
+      ;;
+    *)
+      normalize_lesson "$1" >/dev/null
+      ;;
+  esac
+}
+
+main "$@"

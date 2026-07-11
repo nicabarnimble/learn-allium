@@ -1,0 +1,92 @@
+-- allium: 3
+-- plugin-approval.allium (training starter — DELIBERATELY FLAWED)
+--
+-- Refactor this spec until:
+--   1. `allium check` exits 0 (no diagnostics at all), and
+--   2. a partner can't find a remaining anti-pattern in 5 minutes.
+--
+-- There are NINE planted flaws. The CLI will find three of them.
+-- The other six are yours to hunt. Count them as you go.
+
+-- Scope: Approval lifecycle for a plugin package in the internal extension catalog.
+-- Includes:
+--   - candidate/approved/blocked/deprecated transitions
+--   - what the catalog reviewer may see
+
+entity Reviewer {
+    name: String
+}
+
+entity AuditLog {
+    row_count: Integer
+}
+
+entity Plugin {
+    state: candidate | approved | blocked | deprecated
+    plugin_name: String
+    artifact_version: String
+    artifact_hash_hex: String
+    approve_button_label: String
+    decided_by: String?
+}
+
+given {
+    plugin: Plugin
+}
+
+rule ApprovePlugin {
+    when: ReviewerApprovesPlugin(reviewer)
+    requires: plugin.state = candidate
+    ensures: plugin.state = approved
+    ensures: plugin.decided_by = reviewer.name
+    ensures: RowInsertedIntoSqlite(table: "plugin_registry_entries", plugin: plugin)
+}
+
+rule ApprovePluginStrict {
+    when: ReviewerApprovesPlugin(reviewer)
+    requires: plugin.state = candidate
+    ensures: plugin.state = blocked
+    ensures: PluginApprovalRefused(plugin: plugin, reason: "HTTP 403")
+}
+
+-- NOTE: when a plugin is blocked, the operator must also be notified
+-- by email and the dashboard badge should turn red.
+
+rule BlockPlugin {
+    when: ReviewerBlocksPlugin(reviewer)
+    requires: plugin.stae = approved
+    ensures: plugin.state = blocked
+    ensures: plugin.decided_by = reviewer.name
+    ensures: PluginBlocked(plugin: plugin, reviewer: reviewer)
+}
+
+rule RecordDeprecation {
+    when: ReviewerDeprecatesPlugin(reviewer)
+    requires: plugin.state = approved
+    ensures: plugin.state = deprecated
+    ensures: PluginDeprecated(plugin: plugin, reviewer: reviewer)
+}
+
+surface PluginCatalogAdmin {
+    facing reviewer: Reviewer
+    context plugin: Plugin
+
+    exposes:
+        reviewer.name
+        plugin.state
+        plugin.plugin_name
+        plugin.artifact_version
+        plugin.approve_button_label
+        plugin.decided_by
+
+    provides:
+        ReviewerApprovesPlugin(reviewer)
+            when plugin.state = candidate
+        ReviewerBlocksPlugin(reviewer)
+            when plugin.state = approved
+}
+
+contract PluginApprovalAuthority {
+    @invariant OnlyReviewersDecide
+        -- Every state change is attributed to a reviewer.
+}

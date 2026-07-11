@@ -1,0 +1,33 @@
+name: allium
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  specs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Allium CLI
+        run: cargo install --locked allium-cli
+      - name: Check internal examples
+        run: allium check examples
+      - name: Check completed exercise solutions
+        run: |
+          find exercises -path '*/solution/*.allium' -print0 \
+            | xargs -0 -n1 allium check
+      - name: Analyse internal examples
+        run: |
+          for spec in examples/*.allium; do
+            allium analyse "$spec"
+          done
+      - name: Detect obligation-plan drift for maintained examples
+        run: |
+          mkdir -p /tmp/allium-plans
+          for spec in examples/*.allium; do
+            allium plan "$spec" > "/tmp/allium-plans/$(basename "$spec").plan.json"
+          done
+          echo "Generated plans in /tmp/allium-plans. Commit plans only if your repo adopts plan drift checks."

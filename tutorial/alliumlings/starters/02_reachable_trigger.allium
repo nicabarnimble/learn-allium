@@ -1,0 +1,46 @@
+-- allium: 3
+-- 02_reachable_trigger.allium — starter
+
+-- Scope: a member can cancel an active hold request.
+-- Includes:
+--   - cancelling an active hold
+--   - recording who cancelled it
+-- Excludes:
+--   - queues, notifications, inventory, and account policy
+
+entity Member {
+    name: String
+}
+
+entity HoldRequest {
+    book_title: String
+    active: Boolean
+    cancelled_by: String?
+}
+
+given {
+    request: HoldRequest
+    member: Member
+}
+
+rule CancelHold {
+    when: MemberCancelsHold(member)
+    requires: request.active
+    ensures: request.active = false
+    ensures: request.cancelled_by = member.name
+    ensures: HoldCancelled(request: request, member: member)
+}
+
+surface HoldDesk {
+    facing member: Member
+    context request: HoldRequest
+
+    exposes:
+        member.name
+        request.book_title
+        request.active
+        request.cancelled_by
+
+    provides:
+        -- TODO: make MemberCancelsHold(member) reachable when request.active is true.
+}

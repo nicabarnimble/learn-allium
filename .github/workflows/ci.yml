@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  allium:
+    name: Allium specifications and tutor smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Allium CLI
+        run: cargo install --locked allium-cli --version 3.5.0
+      - name: Check behavioural specifications
+        run: |
+          allium check layer/allium
+          allium analyse layer/allium
+      - name: Check maintained examples
+        run: |
+          allium check examples
+          for spec in examples/*.allium; do
+            allium analyse "$spec"
+          done
+      - name: Check completed exercise solutions
+        run: |
+          while IFS= read -r spec; do
+            allium check "$spec"
+            allium analyse "$spec"
+          done < <(find exercises -path '*/solution/*.allium' | sort)
+      - name: Run tutor smoke test
+        run: ./learn-allium --smoke
+
+  desktop:
+    name: Shared tests and desktop host
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Test shared code and compile desktop host
+        run: ./gradlew :shared:desktopTest :desktopApp:compileKotlin
+
+  apple-frameworks:
+    name: Apple framework links
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Link simulator and device frameworks
+        run: |
+          ./gradlew \
+            :shared:linkDebugFrameworkIosSimulatorArm64 \
+            :shared:linkDebugFrameworkIosArm64

@@ -1,0 +1,80 @@
+-- allium: 3
+-- library-solution.allium — Lesson 01 solution
+
+-- Scope: one library book can be borrowed and returned at a desk.
+-- Includes:
+--   - borrowing an available book
+--   - refusing an already-borrowed book
+--   - returning a borrowed book
+-- Excludes:
+--   - reservations, fines, holds, renewals, accounts, and inventory storage
+
+entity Member {
+    name: String
+}
+
+entity Book {
+    status: on_shelf | borrowed
+    title: String
+    borrowed_by: String?
+    due_at: Timestamp?
+
+    is_available: status = on_shelf
+}
+
+config {
+    loan_period: Duration = 21.days
+}
+
+given {
+    book: Book
+    member: Member
+}
+
+rule BorrowBook {
+    when: MemberBorrowsBook(member)
+    requires: book.status = on_shelf
+    ensures: book.status = borrowed
+    ensures: book.borrowed_by = member.name
+    ensures: book.due_at = now + config.loan_period
+    ensures: BookBorrowed(book: book, member: member)
+}
+
+rule BorrowRefusedWhenTaken {
+    when: MemberBorrowsBook(member)
+    requires: not book.is_available
+    ensures: BorrowRefused(book: book, member: member, reason: "not-on-shelf")
+}
+
+rule ReturnBook {
+    when: MemberReturnsBook(member)
+    requires: book.status = borrowed
+    ensures: book.status = on_shelf
+    ensures: book.borrowed_by = none
+    ensures: book.due_at = none
+    ensures: BookReturned(book: book, member: member)
+}
+
+surface LibraryDesk {
+    facing member: Member
+    context book: Book
+
+    exposes:
+        member.name
+        book.status
+        book.title
+        book.due_at
+
+    provides:
+        MemberBorrowsBook(member)
+        MemberReturnsBook(member)
+            when book.status = borrowed
+}
+
+contract LendingPromise {
+    @invariant OneBorrowerAtATime
+        -- A borrowed book is attributed to exactly one member until returned.
+
+    @invariant RefusalIsExplicit
+        -- Borrowing an unavailable book produces a refusal event, not silence.
+}

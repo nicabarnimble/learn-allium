@@ -1,0 +1,95 @@
+-- allium: 3
+-- plugin-approval.allium (training solution)
+
+-- Scope: Approval lifecycle for a plugin package in the internal extension catalog.
+-- Includes:
+--   - candidate/approved/blocked/deprecated transitions
+--   - reviewer attribution and notification obligations
+-- Excludes:
+--   - storage mechanics (catalog persistence is an implementation concern)
+--   - artifact hash verification (covered by the package-install spec)
+--   - UI presentation of catalog state
+
+entity Reviewer {
+    name: String
+}
+
+entity Plugin {
+    state: candidate | approved | blocked | deprecated
+    plugin_name: String
+    artifact_version: String
+    decided_by: String?
+}
+
+given {
+    plugin: Plugin
+}
+
+rule ApprovePlugin {
+    when: ReviewerApprovesPlugin(reviewer)
+    requires: plugin.state = candidate
+    ensures: plugin.state = approved
+    ensures: plugin.decided_by = reviewer.name
+    ensures: PluginApproved(plugin: plugin, reviewer: reviewer)
+}
+
+rule RejectPlugin {
+    when: ReviewerRejectsPlugin(reviewer)
+    requires: plugin.state = candidate
+    ensures: plugin.state = blocked
+    ensures: plugin.decided_by = reviewer.name
+    ensures: PluginRejected(plugin: plugin, reviewer: reviewer, reason: "rejected-at-review")
+}
+
+rule BlockApprovedPlugin {
+    when: ReviewerBlocksPlugin(reviewer)
+    requires: plugin.state = approved
+    ensures: plugin.state = blocked
+    ensures: plugin.decided_by = reviewer.name
+    ensures: PluginBlocked(plugin: plugin, reviewer: reviewer)
+    ensures: OperatorNotifiedOfBlock(plugin: plugin)
+}
+
+rule DeprecatePlugin {
+    when: ReviewerDeprecatesPlugin(reviewer)
+    requires: plugin.state = approved
+    ensures: plugin.state = deprecated
+    ensures: plugin.decided_by = reviewer.name
+    ensures: PluginDeprecated(plugin: plugin, reviewer: reviewer)
+}
+
+surface PluginCatalogAdmin {
+    facing reviewer: Reviewer
+    context plugin: Plugin
+
+    exposes:
+        reviewer.name
+        plugin.state
+        plugin.plugin_name
+        plugin.artifact_version
+        plugin.decided_by
+
+    provides:
+        ReviewerApprovesPlugin(reviewer)
+            when plugin.state = candidate
+        ReviewerRejectsPlugin(reviewer)
+            when plugin.state = candidate
+        ReviewerBlocksPlugin(reviewer)
+            when plugin.state = approved
+        ReviewerDeprecatesPlugin(reviewer)
+            when plugin.state = approved
+}
+
+contract PluginApprovalAuthority {
+    @invariant OnlyReviewersDecide
+        -- Every state change is attributed to a reviewer via decided_by.
+
+    @invariant CandidateDecisionsArePartitioned
+        -- A candidate is either approved or rejected by distinct reviewer actions; one trigger never has two contradictory outcomes.
+
+    @invariant BlockingNotifiesOperator
+        -- Blocking an approved plugin always emits an operator notification.
+
+    @invariant TerminalDeprecation
+        -- A deprecated plugin never returns to approved; re-inclusion requires a new candidate entry.
+}

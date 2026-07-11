@@ -1,0 +1,24 @@
+format_version = 1
+welcome_message = "Alliumlings: tiny failing Allium specs with deterministic checks and Pi help."
+final_message = "You finished the current Alliumlings set. Add your own spec next!"
+
+[[exercises]]
+name = "01_first_rule"
+title = "First rule"
+file = "01_first_rule.allium"
+hint = "hints/01_first_rule.md"
+solution = "solutions/01_first_rule.allium"
+
+[[exercises]]
+name = "02_reachable_trigger"
+title = "Reachable trigger"
+file = "02_reachable_trigger.allium"
+hint = "hints/02_reachable_trigger.md"
+solution = "solutions/02_reachable_trigger.allium"
+
+[[exercises]]
+name = "03_temporal_overdue"
+title = "Temporal overdue"
+file = "03_temporal_overdue.allium"
+hint = "hints/03_temporal_overdue.md"
+solution = "solutions/03_temporal_overdue.allium"

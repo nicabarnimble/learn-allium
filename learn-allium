@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUTOR="$ROOT/scripts/allium-tutor"
+
+# Friendly default:
+#   ./learn-allium          -> start Alliumlings in this terminal
+#   ./learn-allium tmux     -> optional two-pane Pi helper mode
+# Advanced pass-through:
+#   ./learn-allium doctor
+#   ./learn-allium lesson-01 --smoke
+if [[ $# -eq 0 || "${1:-}" == --* ]]; then
+  exec "$TUTOR" start "$@"
+fi
+
+exec "$TUTOR" "$@"

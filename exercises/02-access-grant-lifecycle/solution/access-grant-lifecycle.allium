@@ -1,0 +1,130 @@
+-- allium: 3
+-- access-grant-lifecycle.allium (training solution)
+
+-- Scope: Lifecycle of a single access grant, from request to terminal state,
+--        and the authorization decision it backs.
+-- Includes:
+--   - approve/deny/expire/revoke transitions
+--   - resource-use authorization against the grant state
+-- Excludes:
+--   - which resources exist and how they are implemented
+--   - organization/team scoping of grants
+--   - storage and audit-log mechanics
+
+entity Operator {
+    name: String
+}
+
+entity Requester {
+    requester_id: String
+}
+
+entity AccessGrant {
+    grant_state: requested | active | denied | expired | revoked
+    resource_name: String
+    requested_by: String
+    decided_by_operator: String?
+    expires_at: Timestamp?
+
+    is_active: grant_state = active
+}
+
+config {
+    grant_ttl: Duration = 24.hours
+}
+
+given {
+    grant: AccessGrant
+    requester: Requester
+}
+
+rule GrantApproved {
+    when: OperatorApprovesGrant(operator)
+    requires: grant.grant_state = requested
+    ensures: grant.grant_state = active
+    ensures: grant.decided_by_operator = operator.name
+    ensures: grant.expires_at = now + config.grant_ttl
+    ensures: AccessGrantActivated(grant: grant, operator: operator)
+}
+
+rule GrantDenied {
+    when: OperatorDeniesGrant(operator)
+    requires: grant.grant_state = requested
+    ensures: grant.grant_state = denied
+    ensures: grant.decided_by_operator = operator.name
+    ensures: AccessGrantDenied(grant: grant, operator: operator)
+}
+
+rule GrantExpires {
+    when: _: AccessGrant.expires_at <= now
+    requires: grant.grant_state = active
+    ensures: grant.grant_state = expired
+    ensures: AccessGrantExpired(grant: grant)
+}
+
+rule GrantRevoked {
+    when: OperatorRevokesGrant(operator)
+    requires: grant.grant_state = active
+    ensures: grant.grant_state = revoked
+    ensures: grant.decided_by_operator = operator.name
+    ensures: AccessGrantRevoked(grant: grant, operator: operator)
+}
+
+rule ResourceUseAuthorized {
+    when: RequesterUsesResource(requester)
+    requires: grant.is_active
+    ensures: ResourceUseAllowed(grant: grant, requester: requester)
+}
+
+rule ResourceUseDenied {
+    when: RequesterUsesResource(requester)
+    requires: not grant.is_active
+    ensures: ResourceUseRefused(grant: grant, requester: requester, reason: "no-active-grant")
+}
+
+surface AccessGrantControl {
+    facing operator: Operator
+    context grant: AccessGrant
+
+    exposes:
+        operator.name
+        grant.grant_state
+        grant.resource_name
+        grant.requested_by
+        grant.decided_by_operator
+        grant.expires_at
+
+    provides:
+        OperatorApprovesGrant(operator)
+            when grant.grant_state = requested
+        OperatorDeniesGrant(operator)
+            when grant.grant_state = requested
+        OperatorRevokesGrant(operator)
+            when grant.grant_state = active
+}
+
+surface ResourceUse {
+    facing requester: Requester
+    context grant: AccessGrant
+
+    exposes:
+        requester.requester_id
+        grant.is_active
+
+    provides:
+        RequesterUsesResource(requester)
+}
+
+contract AccessGrantAuthority {
+    @invariant DenyByDefault
+        -- A resource-use attempt is allowed only when an active grant exists; every other state refuses.
+
+    @invariant ExpiredGrantsDoNotAuthorize
+        -- Once expires_at passes, the grant leaves active and can no longer allow resource use.
+
+    @invariant TerminalStatesStayTerminal
+        -- denied, expired, and revoked grants never return to requested or active; a new request is required.
+
+    @invariant DecisionsAreAttributed
+        -- Every approve, deny, and revoke records the deciding operator.
+}

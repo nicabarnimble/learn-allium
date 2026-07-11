@@ -1,0 +1,179 @@
+-- allium: 3
+-- support-ticket-routing.allium
+
+-- Scope: A compact product-map style spec for support ticket triage.
+-- Includes:
+--   - triage decisions for standard vs security-sensitive tickets
+--   - agent assignment and closure lifecycle
+--   - separate customer-safe and operations-facing surfaces
+-- Excludes:
+--   - queue storage, notification transport, and exact UI copy
+--   - staffing algorithms beyond the authority rules named here
+--   - billing-system integration
+
+-- Decision: Customer-facing denial and escalation messages are intentionally safe summaries.
+-- Decision: Operations may inspect internal triage reasons; customers may not.
+open question "Should premium tickets bypass the standard queue, or only receive an additional review signal?"
+
+entity Customer {
+    customer_id: String
+    plan: standard | premium
+}
+
+entity SupportAgent {
+    agent_id: String
+    team: general | billing | security
+    on_shift: Boolean
+}
+
+entity SupportTicket {
+    ticket_state: submitted | triaged | assigned | escalated | closed
+    severity: low | normal | high | critical
+    category: billing | technical | security
+    summary: String
+    assigned_agent_id: String?
+    triage_reason: String?
+    customer_message: String?
+    audit_ref: String?
+
+    is_security_sensitive: category = security or severity = critical
+}
+
+given {
+    ticket: SupportTicket
+    customer: Customer
+}
+
+rule StandardTicketTriaged {
+    when: TriageRequested(customer)
+    requires: ticket.ticket_state = submitted
+    requires: not ticket.is_security_sensitive
+    ensures: ticket.ticket_state = triaged
+    ensures: ticket.triage_reason = "standard-support-queue"
+    ensures: ticket.customer_message = "Your ticket is queued for support."
+    ensures: ticket.audit_ref = "triage-standard"
+    ensures: TicketTriaged(ticket: ticket, customer: customer)
+}
+
+rule SecurityTicketEscalated {
+    when: TriageRequested(customer)
+    requires: ticket.ticket_state = submitted
+    requires: ticket.is_security_sensitive
+    ensures: ticket.ticket_state = escalated
+    ensures: ticket.triage_reason = "security-sensitive"
+    ensures: ticket.customer_message = "Your ticket is being reviewed by a specialist."
+    ensures: ticket.audit_ref = "triage-security"
+    ensures: SecurityReviewRequested(ticket: ticket, customer: customer)
+}
+
+rule PremiumReviewSignal {
+    when: TriageRequested(customer)
+    requires: ticket.ticket_state = submitted
+    requires: customer.plan = premium
+    ensures: PremiumReviewRequested(ticket: ticket, customer: customer)
+}
+
+rule AgentAcceptsTriagedTicket {
+    when: AgentAcceptsTicket(agent)
+    requires: ticket.ticket_state = triaged
+    requires: agent.on_shift
+    ensures: ticket.ticket_state = assigned
+    ensures: ticket.assigned_agent_id = agent.agent_id
+    ensures: TicketAssigned(ticket: ticket, agent: agent)
+}
+
+rule OffShiftAgentRefused {
+    when: AgentAcceptsTicket(agent)
+    requires: ticket.ticket_state = triaged
+    requires: not agent.on_shift
+    ensures: AssignmentRefused(ticket: ticket, agent: agent, reason: "agent-off-shift")
+}
+
+rule SpecialistAcceptsEscalation {
+    when: AgentAcceptsTicket(agent)
+    requires: ticket.ticket_state = escalated
+    requires: agent.team = security
+    requires: agent.on_shift
+    ensures: ticket.ticket_state = assigned
+    ensures: ticket.assigned_agent_id = agent.agent_id
+    ensures: EscalationAssigned(ticket: ticket, agent: agent)
+}
+
+rule NonSpecialistRefusedForEscalation {
+    when: AgentAcceptsTicket(agent)
+    requires: ticket.ticket_state = escalated
+    requires: not agent.team = security
+    ensures: AssignmentRefused(ticket: ticket, agent: agent, reason: "security-specialist-required")
+}
+
+rule TicketClosedByCustomer {
+    when: CustomerConfirmsResolved(customer)
+    requires: ticket.ticket_state = assigned
+    ensures: ticket.ticket_state = closed
+    ensures: TicketClosed(ticket: ticket, customer: customer)
+}
+
+surface CustomerTicketStatus {
+    facing customer: Customer
+    context ticket: SupportTicket
+
+    exposes:
+        customer.customer_id
+        ticket.ticket_state
+        ticket.summary
+        ticket.customer_message
+        ticket.audit_ref
+
+    provides:
+        TriageRequested(customer)
+            when ticket.ticket_state = submitted
+        CustomerConfirmsResolved(customer)
+            when ticket.ticket_state = assigned
+}
+
+surface AgentQueue {
+    facing agent: SupportAgent
+    context ticket: SupportTicket
+
+    exposes:
+        agent.agent_id
+        agent.team
+        agent.on_shift
+        ticket.ticket_state
+        ticket.category
+        ticket.severity
+
+    provides:
+        AgentAcceptsTicket(agent)
+            when ticket.ticket_state = triaged
+        AgentAcceptsTicket(agent)
+            when ticket.ticket_state = escalated
+}
+
+surface OperationsTriageInspection {
+    facing operator: SupportAgent
+    context ticket: SupportTicket
+
+    exposes:
+        operator.agent_id
+        ticket.ticket_state
+        ticket.category
+        ticket.severity
+        ticket.triage_reason
+        ticket.assigned_agent_id
+        ticket.audit_ref
+}
+
+contract TriageProjectionSafety {
+    @invariant CustomerSeesSafeMessageOnly
+        -- CustomerTicketStatus exposes the customer message and audit reference, not internal triage_reason.
+
+    @invariant SecurityTicketsRequireSpecialist
+        -- Security-sensitive tickets escalate and can only be assigned to on-shift security agents.
+
+    @invariant AssignmentRequiresOnShiftAgent
+        -- A ticket assignment records an agent only when that agent is currently on shift.
+
+    @invariant PremiumSignalDoesNotOverrideAuthority
+        -- Premium plan status may request additional review, but it does not bypass security escalation rules.
+}
